@@ -196,6 +196,7 @@ pub enum KillType {
     InjectFaults = 3,
     FailDisk = 4,
     RebootProcessAndSwitch = 5,
+    RebootProcess = 6,
     Unknown(i64),
 }
 
@@ -211,6 +212,7 @@ impl TryFrom<String> for KillType {
             3 => KillType::InjectFaults,
             4 => KillType::FailDisk,
             5 => KillType::RebootProcessAndSwitch,
+            6 => KillType::RebootProcess,
             _ => KillType::Unknown(num),
         })
     }
@@ -332,14 +334,14 @@ pub fn parse_log_file<P: AsRef<Path>>(file_path: P) -> Result<Vec<Event>, Parsin
             events.push(event);
         } else {
             // Log or handle cases where a valid JSON object doesn't match a known Event type
-            let event_type = node
-                .get("Type")
-                .and_then(|v| v.as_str())
-                .unwrap_or("Unknown");
-            eprintln!(
-                "Skipping line {}: Failed to parse event data for type '{}'",
-                line_number, event_type
-            );
+            // let event_type = node
+            //     .get("Type")
+            //     .and_then(|v| v.as_str())
+            //     .unwrap_or("Unknown");
+            // eprintln!(
+            //     "Skipping line {}: Failed to parse event data for type '{}'",
+            //     line_number, event_type
+            // );
             // Optionally, you could store these as a generic 'UnknownEvent' type
             // Or return Err(ParsingError::EventDataParsing { line: line_number, event_type: event_type.to_string() });
         }
@@ -410,7 +412,7 @@ mod tests {
                 assert_eq!(data.machine, "3.4.3.1:1");
                 assert!(data.target_machine.is_none());
                 assert_eq!(data.target_datacenter.as_deref(), Some("1"));
-                assert_eq!(data.kill_type, Some(KillType::Unknown(6))); // Unknown kill type 6
+                assert_eq!(data.kill_type, Some(KillType::RebootProcess));
             }
             _ => panic!("Parsed event is not an Assassination event"),
         }

@@ -21,19 +21,42 @@ pub struct ProcessInfo {
     pub zone_id: String,
 }
 
+/// Holds summary statistics for CloggingPair events.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CloggingPairSummary {
+    pub count: usize,
+    pub min_seconds: f64,
+    pub mean_seconds: f64,
+    pub max_seconds: f64,
+}
+
+/// Holds summary statistics for ClogInterface events.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ClogInterfaceSummary {
+    pub count: usize,
+    pub min_seconds: f64,
+    pub mean_seconds: f64,
+    pub max_seconds: f64,
+}
+
 /// Holds summary information extracted from a simulation log.
 #[derive(Debug)]
 pub struct SimulationReport {
     /// The random seed used for the simulation run.
     pub seed: Option<String>,
-    // Removed machines: Vec<String>
     /// The final elapsed simulation time reported.
     pub elapsed_time: Option<String>,
     // Separate, time-ordered vectors for specific event types
     pub clogging_pairs: Vec<CloggingPairData>,
+    pub clogging_pair_summary: Option<CloggingPairSummary>, // Renamed summary field
     pub clog_interfaces: Vec<ClogInterfaceData>,
+    // Group interface summary by queue name
+    pub clog_interface_summary: HashMap<String, ClogInterfaceSummary>,
     pub assassinations: Vec<AssassinationData>,
     pub coordinators_changes: Vec<CoordinatorsChangeData>,
+    pub coordinators_change_count: usize,
+    // Summary of assassinations by KillType
+    pub assassination_summary: HashMap<String, usize>,
     // Processed details for machines and processes (using Maps)
     pub machine_details: HashMap<String, MachineInfo>, // Changed to HashMap (Key: Machine ID)
     pub process_details: HashMap<String, ProcessInfo>, // Changed to HashMap (Key: Process Address)
@@ -121,18 +144,99 @@ pub fn create_simulation_report(events: &[Event]) -> SimulationReport {
             .unwrap_or(std::cmp::Ordering::Equal)
     });
 
-    // No need to sort HashMaps or convert them
+    // --- Calculate Clogging Summary ---
+    let mut min_seconds = f64::MAX;
+    let mut max_seconds = f64::MIN;
+    let mut sum_seconds = 0.0;
+    let mut count = 0;
 
-    // Removed machine list conversion
+    for pair in &clogging_pairs {
+        // Attempt to parse the seconds string into f64
+        if let Ok(seconds) = pair.seconds.parse::<f64>() {
+            min_seconds = min_seconds.min(seconds);
+            max_seconds = max_seconds.max(seconds);
+            sum_seconds += seconds;
+            count += 1;
+        } else {
+            // Optional: Log warning for parse failures if needed
+            // eprintln!("Warning: Failed to parse clogging seconds '{}' for pair {:?}", pair.seconds, pair);
+        }
+    }
+
+    let clogging_pair_summary = if count > 0 {
+        Some(CloggingPairSummary {
+            count,
+            min_seconds,
+            mean_seconds: sum_seconds / count as f64,
+            max_seconds,
+        })
+    } else {
+        // Provide a default summary if no valid clogging pairs were found
+        Some(CloggingPairSummary {
+            count: 0,
+            min_seconds: 0.0,
+            mean_seconds: 0.0,
+            max_seconds: 0.0,
+        })
+    };
+
+    // --- Calculate Clog Interface Summary (Grouped by Queue) ---
+    let mut interface_stats: HashMap<String, (f64, f64, f64, usize)> = HashMap::new(); // (sum, min, max, count)
+
+    for interface in &clog_interfaces {
+        if let Ok(seconds) = interface.delay.parse::<f64>() {
+            let queue_name = interface.queue.clone(); // Use queue name as key
+            let entry = interface_stats
+                .entry(queue_name)
+                .or_insert((0.0, f64::MAX, f64::MIN, 0));
+            entry.0 += seconds; // sum
+            entry.1 = entry.1.min(seconds); // min
+            entry.2 = entry.2.max(seconds); // max
+            entry.3 += 1; // count
+        } // Optional: Log warning for parse failures
+    }
+
+    let clog_interface_summary: HashMap<String, ClogInterfaceSummary> = interface_stats
+        .into_iter()
+        .map(|(queue, (sum, min_val, max_val, count))| {
+            let summary = ClogInterfaceSummary {
+                count,
+                min_seconds: min_val,
+                mean_seconds: if count > 0 { sum / count as f64 } else { 0.0 },
+                max_seconds: max_val,
+            };
+            (queue, summary)
+        })
+        .collect();
+
+    // --- Calculate Assassination Summary (Grouped by KillType) ---
+    let mut assassination_summary: HashMap<String, usize> = HashMap::new();
+    for assassination in &assassinations {
+        // Convert KillType (or None) to a string key
+        let key = match &assassination.kill_type {
+            Some(kt) => format!("{:?}", kt), // Use Debug representation for now
+            None => "Unknown".to_string(),
+        };
+        *assassination_summary.entry(key).or_insert(0) += 1;
+    }
+
+    // --- Calculate Coordinator Change Count ---
+    let coordinators_change_count = coordinators_changes.len();
+
+    // No need to sort HashMaps or convert them
 
     SimulationReport {
         seed,
         // machines field removed
         elapsed_time,
         clogging_pairs,
+        clogging_pair_summary, // Include renamed summary in report
         clog_interfaces,
+        clog_interface_summary, // Include new summary
         assassinations,
         coordinators_changes,
+        coordinators_change_count, // Include coordinator change count
+        assassination_summary,     // Include assassination summary
         machine_details: machine_details_map, // Use map directly
         process_details: process_details_map, // Use map directly
     }
@@ -162,7 +266,11 @@ mod tests {
 
         // Create the report
         let report = create_simulation_report(&events);
-        dbg!(&report); // Debug print the created report
+        // dbg!(&report); // Optionally uncomment to debug print the full report
+        dbg!(report.clogging_pair_summary.as_ref()); // Debug print just the summary
+        dbg!(&report.clog_interface_summary); // Debug print interface summary
+        dbg!(&report.assassination_summary); // Debug print assassination summary
+        dbg!(report.coordinators_change_count); // Debug print coordinator change count
 
         // Assertions
         assert_eq!(
@@ -173,6 +281,60 @@ mod tests {
         assert!(
             report.elapsed_time.is_some(),
             "Elapsed time should be present."
+        );
+
+        // Check clogging summary
+        assert!(
+            report.clogging_pair_summary.is_some(),
+            "Clogging summary should be present."
+        );
+        // Check specific values for CloggingPairSummary (adjust precision as needed)
+        if let Some(summary) = report.clogging_pair_summary.as_ref() {
+            assert_eq!(summary.count, 308, "Incorrect clogging pair count");
+            assert!(
+                (summary.min_seconds - 0.000734521).abs() < 1e-9,
+                "Incorrect min clogging pair seconds"
+            );
+            assert!(
+                (summary.mean_seconds - 1.1832040077597417).abs() < 1e-9,
+                "Incorrect mean clogging pair seconds"
+            );
+            assert!(
+                (summary.max_seconds - 9.04286).abs() < 1e-9,
+                "Incorrect max clogging pair seconds"
+            );
+        }
+
+        // Check clog interface summary (now a map)
+        assert!(
+            !report.clog_interface_summary.is_empty(),
+            "Clog interface summary map should not be empty."
+        );
+        // Optionally, assert presence and values for specific queues if known
+        // e.g., assert!(report.clog_interface_summary.contains_key("SpecificQueueName"));
+
+        // Check assassination summary
+        dbg!(&report.assassination_summary);
+        assert!(
+            !report.assassination_summary.is_empty(),
+            "Assassination summary map should not be empty."
+        );
+        assert_eq!(
+            report.assassination_summary.len(),
+            1,
+            "Assassination summary map should have exactly one entry."
+        );
+        assert_eq!(
+            report.assassination_summary.get("RebootProcess"),
+            Some(&1),
+            "Incorrect count for KillType RebootProcess"
+        );
+
+        // Check coordinator change count
+        dbg!(report.coordinators_change_count);
+        assert_eq!(
+            report.coordinators_change_count, 1,
+            "Incorrect coordinator change count."
         );
 
         // Check machine details (basic checks)
