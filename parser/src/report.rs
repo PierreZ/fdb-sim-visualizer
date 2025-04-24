@@ -1,19 +1,22 @@
-use crate::parser::Event;
-use crate::parser::{
-    AssassinationData, ClogInterfaceData, CloggingPairData, CoordinatorsChangeData,
-};
+use serde::Serialize;
+
+use crate::parser::{AssassinationData, ClogInterfaceData, CloggingPairData, CoordinatorsChangeData, Event};
 use std::collections::HashMap;
+use std::fmt;
+
+// --- Report Structures ---
 
 /// Contains details about a simulated machine.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Ord, PartialOrd)] // Keep Ord/PartialOrd for potential future use if needed
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Ord, PartialOrd, Serialize)]
 pub struct MachineInfo {
     pub id: String,
+    pub ip_address: String,
     pub data_hall: String,
-    pub dcid: Option<String>,
+    pub zone_id: String,
 }
 
 /// Contains details about a simulated process.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Ord, PartialOrd)] // Keep Ord/PartialOrd
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Ord, PartialOrd, Serialize)]
 pub struct ProcessInfo {
     pub id: String,
     pub address: String,
@@ -22,7 +25,7 @@ pub struct ProcessInfo {
 }
 
 /// Holds summary statistics for CloggingPair events.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct CloggingPairSummary {
     pub count: usize,
     pub min_seconds: f64,
@@ -31,7 +34,7 @@ pub struct CloggingPairSummary {
 }
 
 /// Holds summary statistics for ClogInterface events.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct ClogInterfaceSummary {
     pub count: usize,
     pub min_seconds: f64,
@@ -40,7 +43,7 @@ pub struct ClogInterfaceSummary {
 }
 
 /// Holds summary information extracted from a simulation log.
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct SimulationReport {
     /// The random seed used for the simulation run.
     pub seed: Option<String>,
@@ -60,6 +63,67 @@ pub struct SimulationReport {
     // Processed details for machines and processes (using Maps)
     pub machine_details: HashMap<String, MachineInfo>, // Changed to HashMap (Key: Machine ID)
     pub process_details: HashMap<String, ProcessInfo>, // Changed to HashMap (Key: Process Address)
+}
+
+impl fmt::Display for SimulationReport {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(f, "FoundationDB Simulation Report")?;
+        writeln!(f, "==============================")?;
+
+        if let Some(seed) = &self.seed {
+            writeln!(f, "Seed: {}", seed)?;
+        }
+        if let Some(elapsed) = &self.elapsed_time {
+            writeln!(f, "Elapsed Time: {} seconds", elapsed)?;
+        }
+        writeln!(f, "")?;
+
+        writeln!(f, "--- Summaries ---")?;
+        if let Some(summary) = &self.clogging_pair_summary {
+            writeln!(f, "  Clogging Pairs:")?;
+            writeln!(f, "    Count: {}", summary.count)?;
+            writeln!(f, "    Duration (sec): Min={:.6}, Mean={:.6}, Max={:.6}", summary.min_seconds, summary.mean_seconds, summary.max_seconds)?;
+        }
+
+        writeln!(f, "  Clogged Interfaces (by Queue):")?;
+        // Sort keys for consistent output
+        let mut sorted_queues: Vec<_> = self.clog_interface_summary.keys().collect();
+        sorted_queues.sort();
+        for queue_name in sorted_queues {
+             if let Some(summary) = self.clog_interface_summary.get(queue_name) {
+                writeln!(f, "    Queue '{}':", queue_name)?;
+                writeln!(f, "      Count: {}", summary.count)?;
+                writeln!(f, "      Delay (sec): Min={:.6}, Mean={:.6}, Max={:.6}", summary.min_seconds, summary.mean_seconds, summary.max_seconds)?;
+            }
+        }
+
+        writeln!(f, "  Assassinations (by KillType):")?;
+        if self.assassination_summary.is_empty() {
+             writeln!(f, "    None")?;
+        } else {
+            // Sort keys for consistent output
+            let mut sorted_kill_types: Vec<_> = self.assassination_summary.keys().collect();
+            sorted_kill_types.sort();
+            for kill_type in sorted_kill_types {
+                if let Some(count) = self.assassination_summary.get(kill_type) {
+                     writeln!(f, "    {}: {}", kill_type, count)?;
+                }
+            }
+        }
+
+        writeln!(f, "  Coordinator Changes: {}", self.coordinators_change_count)?;
+        writeln!(f, "")?;
+
+        // Initially, don't print the long vectors or detailed maps
+        // Add sections here later if needed, possibly behind a flag.
+        writeln!(f, "--- Details ---")?;
+        writeln!(f, "  Machines Found: {}", self.machine_details.len())?;
+        writeln!(f, "  Processes Found: {}", self.process_details.len())?;
+        writeln!(f, "(Raw event lists and detailed machine/process info omitted for brevity)")?;
+
+
+        Ok(())
+    }
 }
 
 /// Creates a `SimulationReport` by processing a slice of `Event`s.
@@ -95,25 +159,35 @@ pub fn create_simulation_report(events: &[Event]) -> SimulationReport {
             Event::CloggingPair(data) => clogging_pairs.push(data.clone()),
             Event::ClogInterface(data) => clog_interfaces.push(data.clone()),
             Event::SimulatedMachineStart(data) => {
-                // Use machine ID as key
-                machine_details_map
-                    .entry(data.id.clone())
-                    .or_insert_with(|| MachineInfo {
+                // Insert or update machine info
+                machine_details_map.entry(data.id.clone()).or_insert_with(|| {
+                    // Extract zone_id from locality string, default to placeholder
+                    let zone_id = data.locality.split(',')
+                        .find_map(|pair| {
+                            let mut parts = pair.splitn(2, '=');
+                            if parts.next()? == "zoneid" {
+                                parts.next().map(|s| s.to_string())
+                            } else {
+                                None
+                            }
+                        })
+                        .unwrap_or_else(|| "[Unknown ZoneID]".to_string());
+                    MachineInfo {
                         id: data.id.clone(),
+                        ip_address: data.machine_ips.clone(), // Use the string directly
                         data_hall: data.data_hall.clone(),
-                        dcid: data.dcid.clone(),
-                    });
+                        zone_id, // Use extracted or placeholder zone_id
+                    }
+                });
             }
             Event::SimulatedMachineProcess(data) => {
-                // Use process address as key
-                process_details_map
-                    .entry(data.address.clone())
-                    .or_insert_with(|| ProcessInfo {
-                        id: data.id.clone(),
-                        address: data.address.clone(),
-                        data_hall: data.data_hall.clone(),
-                        zone_id: data.zone_id.clone(),
-                    });
+                // Insert or update process info
+                process_details_map.entry(data.address.clone()).or_insert(ProcessInfo {
+                    id: data.id.clone(),
+                    address: data.address.clone(),
+                    data_hall: data.data_hall.clone(),
+                    zone_id: data.zone_id.clone(),
+                });
             }
             Event::Assassination(data) => assassinations.push(data.clone()),
             Event::CoordinatorsChange(data) => coordinators_changes.push(data.clone()),
@@ -267,7 +341,7 @@ mod tests {
         // Create the report
         let report = create_simulation_report(&events);
         // dbg!(&report); // Optionally uncomment to debug print the full report
-        dbg!(report.clogging_pair_summary.as_ref()); // Debug print just the summary
+        dbg!(report.clogging_pair_summary.as_ref()); // Debug print just the summary (use as_ref)
         dbg!(&report.clog_interface_summary); // Debug print interface summary
         dbg!(&report.assassination_summary); // Debug print assassination summary
         dbg!(report.coordinators_change_count); // Debug print coordinator change count

@@ -1,14 +1,14 @@
 use regex::Regex;
 use serde::de::DeserializeOwned;
-use serde::Deserialize;
 use serde_json::Value as JsonNode;
 use std::fs::File;
 use std::io::{self, BufRead, BufReader};
 use std::path::Path;
 use thiserror::Error;
+use serde::{Serialize, Deserialize};
 
 /// Represents different types of log events.
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
 pub enum Event {
     /// Represents a CloggingPair event.
     CloggingPair(CloggingPairData),
@@ -30,7 +30,7 @@ pub enum Event {
 }
 
 /// Data specific to a CloggingPair event.
-#[derive(Debug, Deserialize, PartialEq, Clone)]
+#[derive(Debug, Deserialize, PartialEq, Clone, Serialize)]
 pub struct CloggingPairData {
     // Use idiomatic snake_case names and rename attributes
     #[serde(rename = "Time")]
@@ -50,7 +50,7 @@ impl Into<Event> for CloggingPairData {
 }
 
 /// Data specific to a ClogInterface event.
-#[derive(Debug, Deserialize, PartialEq, Clone)]
+#[derive(Debug, Deserialize, PartialEq, Clone, Serialize)]
 pub struct ClogInterfaceData {
     #[serde(rename = "Time")]
     pub timestamp: String,
@@ -70,7 +70,7 @@ impl Into<Event> for ClogInterfaceData {
 }
 
 /// Data specific to an ElapsedTime event.
-#[derive(Debug, Deserialize, PartialEq, Clone)]
+#[derive(Debug, Deserialize, PartialEq, Clone, Serialize)]
 pub struct ElapsedTimeData {
     #[serde(rename = "Time")]
     pub timestamp: String,
@@ -89,7 +89,7 @@ impl Into<Event> for ElapsedTimeData {
 }
 
 /// Data specific to a SimulatedMachineStart event.
-#[derive(Debug, Deserialize, PartialEq, Clone)]
+#[derive(Debug, Deserialize, PartialEq, Clone, Serialize)]
 pub struct SimulatedMachineStartData {
     #[serde(rename = "Time")]
     pub timestamp: String,
@@ -110,7 +110,7 @@ pub struct SimulatedMachineStartData {
 }
 
 /// Data specific to a SimulatedMachineProcess event.
-#[derive(Debug, Deserialize, PartialEq, Clone)]
+#[derive(Debug, Deserialize, PartialEq, Clone, Serialize)]
 pub struct SimulatedMachineProcessData {
     #[serde(rename = "Time")]
     pub timestamp: String,
@@ -132,7 +132,7 @@ impl Into<Event> for SimulatedMachineProcessData {
 }
 
 /// Data specific to an Assassination event.
-#[derive(Debug, Deserialize, PartialEq, Clone)]
+#[derive(Debug, Deserialize, PartialEq, Clone, Serialize)]
 pub struct AssassinationData {
     #[serde(rename = "Time")]
     pub timestamp: String,
@@ -154,7 +154,7 @@ impl Into<Event> for AssassinationData {
 }
 
 /// Data specific to a CoordinatorsChange event.
-#[derive(Debug, Deserialize, PartialEq, Clone)]
+#[derive(Debug, Deserialize, PartialEq, Clone, Serialize)]
 pub struct CoordinatorsChangeData {
     #[serde(rename = "Time")]
     pub timestamp: String,
@@ -170,7 +170,7 @@ impl Into<Event> for CoordinatorsChangeData {
 }
 
 /// Data specific to a ProgramStart event.
-#[derive(Debug, Deserialize, PartialEq, Clone)]
+#[derive(Debug, Deserialize, PartialEq, Clone, Serialize)]
 pub struct ProgramStartData {
     #[serde(rename = "Time")]
     pub timestamp: String,
@@ -187,7 +187,7 @@ impl Into<Event> for ProgramStartData {
 }
 
 #[repr(i64)] // Specify underlying representation
-#[derive(Debug, PartialEq, Clone, Copy, Deserialize)]
+#[derive(Debug, PartialEq, Clone, Copy, Deserialize, Serialize)]
 #[serde(try_from = "String")]
 pub enum KillType {
     Reboot = 0,
