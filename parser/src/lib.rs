@@ -23,6 +23,8 @@ pub enum Event {
     Assassination(AssassinationData),
     /// Represents a CoordinatorsChange event.
     CoordinatorsChange(CoordinatorsChangeData),
+    /// Represents a ProgramStart event.
+    ProgramStart(ProgramStartData),
     // Add other specific event variants here
 }
 
@@ -130,6 +132,17 @@ pub struct CoordinatorsChangeData {
     // Other fields ignored: Severity, DateTime, Machine, ID, Auto, ThreadID, LogGroup, Roles
 }
 
+/// Data specific to a ProgramStart event.
+#[derive(Debug, Deserialize, PartialEq)]
+pub struct ProgramStartData {
+    #[serde(rename = "Time")]
+    pub timestamp: String,
+    #[serde(rename = "Machine")]
+    pub machine: String,
+    #[serde(rename = "RandomSeed")]
+    pub random_seed: Option<String>, // Seed might not be present in all ProgramStart events
+}
+
 #[repr(i64)] // Specify underlying representation
 #[derive(Debug, PartialEq, Clone, Copy, Deserialize)]
 #[serde(try_from = "String")]
@@ -174,6 +187,7 @@ impl Event {
             Event::SimulatedMachineProcess(data) => data.timestamp.parse().unwrap_or(0.0),
             Event::Assassination(data) => data.timestamp.parse().unwrap_or(0.0),
             Event::CoordinatorsChange(data) => data.timestamp.parse().unwrap_or(0.0),
+            Event::ProgramStart(data) => data.timestamp.parse().unwrap_or(0.0),
         }
     }
 }
@@ -281,6 +295,12 @@ fn parse_event_from_node(node: &JsonNode) -> Option<Event> {
                     Err(_) => None,
                 }
             }
+            "ProgramStart" => {
+                match serde_json::from_value::<ProgramStartData>(node.clone()) {
+                    Ok(data) => Some(Event::ProgramStart(data)),
+                    Err(_) => None,
+                }
+            }
             // Add cases for other known event types here
             // "SomeOtherEvent" => { ... }
             _ => None, // Unknown "Type"
@@ -357,8 +377,8 @@ mod tests {
         assert_eq!(coord_change_count, 1, "Incorrect CoordinatorsChange count");
         assert_eq!(
             events.len(),
-            848, // Update expected total count
-            "Expected 848 total events, found {}",
+            883, // Update expected total count
+            "Expected 883 total events, found {}",
             events.len()
         );
 
@@ -445,6 +465,42 @@ mod tests {
                 assert_eq!(data.kill_type, Some(KillType::Unknown(6)));
             }
             _ => panic!("Parsed event is not an Assassination event"),
+        }
+    }
+
+    #[test]
+    fn test_parse_program_start_event_with_seed() {
+        let json_line = r#"{
+            "Severity": "10", "Time": "0.000000", "DateTime": "2025-04-24T08:55:36Z", "Type": "ProgramStart", "Machine": "0.0.0.0:0", "ID": "0000000000000000", "RandomSeed": "2837976339", "SourceVersion": "412531b5c97fa84343da94888cc949a4d29e8c29", "Version": "7.3.43", "PackageName": "7.3", "FileSystem": "", "DataFolder": "", "WorkingDirectory": "/root", "ClusterFile": "", "ConnectionString": "", "ActualTime": "1745484936", "EnvironmentKnobOptions": "none", "CommandLine": "fdbserver -r simulation -f /root/logical_db.toml -b on --trace-format json -L ./logs", "BuggifyEnabled": "1", "FaultInjectionEnabled": "1", "MemoryLimit": "8589934592", "VirtualMemoryLimit": "0", "ProtocolVersion": "0x0FDB00B073000000", "ThreadID": "10058538621798076542", "LogGroup": "default", "TrackLatestType": "Original"
+        }"#;
+        let node: JsonNode = serde_json::from_str(json_line).expect("Failed to parse JSON line");
+        let event = parse_event_from_node(&node);
+
+        assert!(event.is_some(), "Event should be parsed");
+        match event.unwrap() {
+            Event::ProgramStart(data) => {
+                assert_eq!(data.timestamp, "0.000000");
+                assert_eq!(data.machine, "0.0.0.0:0");
+                assert_eq!(data.random_seed.as_deref(), Some("2837976339"));
+            }
+            _ => panic!("Parsed event is not a ProgramStart event"),
+        }
+    }
+
+    #[test]
+    fn test_parse_program_start_event_without_seed() {
+         let json_line = r#"{  "Severity": "10", "Time": "251.750000", "OriginalTime": "59.959330", "DateTime": "2025-04-24T08:56:01Z", "OriginalDateTime": "2025-04-24T08:55:51Z", "Type": "ProgramStart", "Machine": "0.0.0.0:0", "ID": "0000000000000000", "Cycles": "2", "RandomId": "335a979b73b384c9", "SourceVersion": "412531b5c97fa84343da94888cc949a4d29e8c29", "Version": "7.3.43", "PackageName": "7.3", "DataFolder": "simfdb/6692e205b59f17fc558b5ed42d7a6bfa", "ConnectionString": "TestCluster:0@2.0.1.0:1:tls", "ActualTime": "1745484951", "CommandLine": "fdbserver -r simulation", "BuggifyEnabled": "1", "Simulated": "1", "ThreadID": "11198558628993500058", "LogGroup": "default", "TrackLatestType": "Rolled" }"#;
+        let node: JsonNode = serde_json::from_str(json_line).expect("Failed to parse JSON line");
+        let event = parse_event_from_node(&node);
+
+        assert!(event.is_some(), "Event should be parsed");
+        match event.unwrap() {
+            Event::ProgramStart(data) => {
+                assert_eq!(data.timestamp, "251.750000");
+                assert_eq!(data.machine, "0.0.0.0:0");
+                assert!(data.random_seed.is_none());
+            }
+            _ => panic!("Parsed event is not a ProgramStart event"),
         }
     }
 }
