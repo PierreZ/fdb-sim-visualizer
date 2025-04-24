@@ -87,6 +87,7 @@ version = "0.1.0"
 dependencies = [
  "regex",
  "serde",
+ "serde-aux",
  "serde_json",
  "tempfile",
  "thiserror",
@@ -171,6 +172,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5f0e2c6ed6606019b4e29e69dbaba95b11854410e5347d525002456dbbb786b6"
 dependencies = [
  "serde_derive",
+]
+
+[[package]]
+name = "serde-aux"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e77edd62c445c4932f49267d2c2bc8e74089d6c645d3ef7ac4e630dc020f2d3d"
+dependencies = [
+ "serde",
+ "serde_derive",
+ "serde_json",
 ]
 
 [[package]]

@@ -19,6 +19,8 @@ pub enum Event {
     SimulatedMachineStart(SimulatedMachineStartData),
     /// Represents a SimulatedMachineProcess event.
     SimulatedMachineProcess(SimulatedMachineProcessData),
+    /// Represents an Assassination event.
+    Assassination(AssassinationData),
     // Add other specific event variants here
 }
 
@@ -103,6 +105,52 @@ pub struct SimulatedMachineProcessData {
     // Other fields ignored: Severity, DateTime, Machine, Folder, ThreadID, LogGroup
 }
 
+/// Data specific to an Assassination event.
+#[derive(Debug, Deserialize, PartialEq)]
+pub struct AssassinationData {
+    #[serde(rename = "Time")]
+    pub timestamp: String,
+    #[serde(rename = "Machine")]
+    pub machine: String,
+    #[serde(rename = "TargetMachine")]
+    pub target_machine: Option<String>,
+    #[serde(rename = "TargetDatacenter")]
+    pub target_datacenter: Option<String>,
+    #[serde(rename = "KillType")]
+    pub kill_type: Option<KillType>,
+    // Other fields ignored
+}
+
+#[repr(i64)] // Specify underlying representation
+#[derive(Debug, PartialEq, Clone, Copy, Deserialize)]
+#[serde(try_from = "String")]
+pub enum KillType {
+    Reboot = 0,
+    RebootAndDelete = 1,
+    KillInstantly = 2,
+    InjectFaults = 3,
+    FailDisk = 4,
+    RebootProcessAndSwitch = 5,
+    Unknown(i64),
+}
+
+impl TryFrom<String> for KillType {
+    type Error = std::num::ParseIntError;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        let num = value.parse::<i64>()?;
+        Ok(match num {
+            0 => KillType::Reboot,
+            1 => KillType::RebootAndDelete,
+            2 => KillType::KillInstantly,
+            3 => KillType::InjectFaults,
+            4 => KillType::FailDisk,
+            5 => KillType::RebootProcessAndSwitch,
+            _ => KillType::Unknown(num),
+        })
+    }
+}
+
 impl Event {
     /// Returns the timestamp associated with the event, parsed from string.
     /// Returns 0.0 if parsing fails.
@@ -115,6 +163,7 @@ impl Event {
             Event::ElapsedTime(data) => data.timestamp.parse().unwrap_or(0.0),
             Event::SimulatedMachineStart(data) => data.timestamp.parse().unwrap_or(0.0),
             Event::SimulatedMachineProcess(data) => data.timestamp.parse().unwrap_or(0.0),
+            Event::Assassination(data) => data.timestamp.parse().unwrap_or(0.0),
         }
     }
 }
@@ -210,6 +259,12 @@ fn parse_event_from_node(node: &JsonNode) -> Option<Event> {
                     Err(_) => None,
                 }
             }
+            "Assassination" => {
+                match serde_json::from_value::<AssassinationData>(node.clone()) {
+                    Ok(data) => Some(Event::Assassination(data)),
+                    Err(_) => None,
+                }
+            }
             // Add cases for other known event types here
             // "SomeOtherEvent" => { ... }
             _ => None, // Unknown "Type"
@@ -268,16 +323,21 @@ mod tests {
             .iter()
             .filter(|e| matches!(e, Event::ElapsedTime(_)))
             .count();
+        let assassination_count = events
+            .iter()
+            .filter(|e| matches!(e, Event::Assassination(_)))
+            .count();
 
         assert_eq!(clog_pair_count, 308, "Incorrect CloggingPair count");
         assert_eq!(clog_if_count, 479, "Incorrect ClogInterface count");
         assert_eq!(elapsed_count, 1, "Incorrect ElapsedTime count");
         assert_eq!(start_count, 29, "Incorrect SimulatedMachineStart count");
         assert_eq!(process_count, 29, "Incorrect SimulatedMachineProcess count");
+        assert_eq!(assassination_count, 1, "Incorrect Assassination count"); // Add assertion for Assassination
         assert_eq!(
             events.len(),
-            846,
-            "Expected 846 total events, found {}",
+            847, // Update expected total count
+            "Expected 847 total events, found {}",
             events.len()
         );
 
@@ -322,6 +382,48 @@ mod tests {
             ParsingError::Io(_) => { /* Expected */ }
             // Update expected error type
             err => panic!("Expected Io error, got {:?}", err),
+        }
+    }
+
+    #[test]
+    fn test_parse_assassination_event() {
+        let json_line = r#"{
+            "Severity": "10", "Time": "115.540043", "DateTime": "2025-04-24T08:55:32Z", "Type": "Assassination", "Machine": "3.4.3.3:1", "ID": "0000000000000000", "TargetMachine": "zoneid=ac78c874bf4df0b17c83b9e9a8a29994 processid=[unset] machineid=ddc4353aca4a28397c289fa49080f82d dcid=1 data_hall=1", "ZoneId": "ac78c874bf4df0b17c83b9e9a8a29994", "Reboot": "1", "KilledMachines": "0", "MachinesToKill": "10", "MachinesToLeave": "3", "Machines": "18", "Replace": "1", "ThreadID": "14334889317801306560", "LogGroup": "default", "Roles": "TS"
+        }"#;
+        let node: JsonNode = serde_json::from_str(json_line).expect("Failed to parse JSON line");
+        let event = parse_event_from_node(&node);
+
+        assert!(event.is_some(), "Event should be parsed");
+        match event.unwrap() {
+            Event::Assassination(data) => {
+                assert_eq!(data.timestamp, "115.540043");
+                assert_eq!(data.machine, "3.4.3.3:1");
+                assert_eq!(data.target_machine.as_deref(), Some("zoneid=ac78c874bf4df0b17c83b9e9a8a29994 processid=[unset] machineid=ddc4353aca4a28397c289fa49080f82d dcid=1 data_hall=1"));
+                assert!(data.target_datacenter.is_none());
+            }
+            _ => panic!("Parsed event is not an Assassination event"),
+        }
+    }
+
+    #[test]
+    fn test_parse_assassination_event_datacenter() {
+        let json_line = r#"{
+            "Severity": "10", "Time": "138.462824", "DateTime": "2025-04-24T08:55:39Z", "Type": "Assassination", "Machine": "3.4.3.1:1", "ID": "0000000000000000", "TargetDatacenter": "1", "Reboot": "1", "KillType": "6", "ThreadID": "10058538621798076542", "LogGroup": "default", "Roles": "TS"
+        }"#;
+
+        let node: JsonNode = serde_json::from_str(json_line).expect("Failed to parse JSON line");
+        let event = parse_event_from_node(&node);
+
+        assert!(event.is_some(), "Event should be parsed");
+        match event.unwrap() {
+            Event::Assassination(data) => {
+                assert_eq!(data.timestamp, "138.462824");
+                assert_eq!(data.machine, "3.4.3.1:1");
+                assert!(data.target_machine.is_none());
+                assert_eq!(data.target_datacenter.as_deref(), Some("1"));
+                assert_eq!(data.kill_type, Some(KillType::Unknown(6)));
+            }
+            _ => panic!("Parsed event is not an Assassination event"),
         }
     }
 }

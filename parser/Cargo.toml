@@ -5,9 +5,10 @@ edition = "2021"
 
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
-serde_json = { version = "1.0", features = ["arbitrary_precision"] } # Restored arbitrary_precision
+serde_json = "1.0"
+serde-aux = "0.1"
 thiserror = "1.0"
-regex = "1.10" # Added regex dependency
+regex = "1.10.4"
 
 [dev-dependencies]
 tempfile = "3.10"
