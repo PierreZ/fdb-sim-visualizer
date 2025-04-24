@@ -36,9 +36,8 @@ pub struct CloggingPairData {
     pub from_id: String,
     #[serde(rename = "To")] // Match JSON key "To"
     pub to_id: String,
-    #[serde(rename = "Machine")]
-    pub machine: String,
-    // Other fields like ID, Seconds, etc., are ignored by default
+    #[serde(rename = "Seconds")]
+    pub seconds: String, // Match JSON string type
 }
 
 /// Data specific to a ClogInterface event.
@@ -46,8 +45,6 @@ pub struct CloggingPairData {
 pub struct ClogInterfaceData {
     #[serde(rename = "Time")]
     pub timestamp: String,
-    #[serde(rename = "Machine")]
-    pub machine: String,
     #[serde(rename = "IP")]
     pub ip: String,
     #[serde(rename = "Delay")]
