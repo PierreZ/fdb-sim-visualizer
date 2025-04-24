@@ -10,6 +10,10 @@ use thiserror::Error;
 pub enum Event {
     /// Represents a CloggingPair event.
     CloggingPair(CloggingPairData),
+    /// Represents a ClogInterface event.
+    ClogInterface(ClogInterfaceData),
+    /// Represents an ElapsedTime event.
+    ElapsedTime(ElapsedTimeData),
     // Add other specific event variants here
 }
 
@@ -28,13 +32,45 @@ pub struct CloggingPairData {
     // Other fields like ID, Seconds, etc., are ignored by default
 }
 
+/// Data specific to a ClogInterface event.
+#[derive(Debug, Deserialize, PartialEq)]
+pub struct ClogInterfaceData {
+    #[serde(rename = "Time")]
+    pub timestamp: String,
+    #[serde(rename = "Machine")]
+    pub machine: String,
+    #[serde(rename = "IP")]
+    pub ip: String,
+    #[serde(rename = "Delay")]
+    pub delay: String,
+    #[serde(rename = "Queue")]
+    pub queue: String,
+    // Severity, DateTime, ID, ThreadID, LogGroup, Roles ignored
+}
+
+/// Data specific to an ElapsedTime event.
+#[derive(Debug, Deserialize, PartialEq)]
+pub struct ElapsedTimeData {
+    #[serde(rename = "Time")]
+    pub timestamp: String,
+    // Note: This event uses SimTime, not Time, for its primary timestamp.
+    #[serde(rename = "SimTime")]
+    pub sim_time: String,
+    #[serde(rename = "RealTime")]
+    pub real_time: String,
+    // Severity, DateTime, Machine, ID, ThreadID, LogGroup ignored
+}
+
 impl Event {
     /// Returns the timestamp associated with the event, parsed from string.
     /// Returns 0.0 if parsing fails.
+    /// For ElapsedTime events, this uses the SimTime field.
     pub fn timestamp(&self) -> f64 {
         match self {
             // Parse the timestamp string to f64
             Event::CloggingPair(data) => data.timestamp.parse().unwrap_or(0.0),
+            Event::ClogInterface(data) => data.timestamp.parse().unwrap_or(0.0),
+            Event::ElapsedTime(data) => data.timestamp.parse().unwrap_or(0.0),
         }
     }
 }
@@ -98,6 +134,20 @@ fn parse_event_from_node(node: &JsonNode) -> Option<Event> {
                     Err(_) => None, // Failed specific parse for known type
                 }
             }
+            "ClogInterface" => {
+                // Attempt to deserialize into the specific data struct
+                match serde_json::from_value::<ClogInterfaceData>(node.clone()) {
+                    Ok(data) => Some(Event::ClogInterface(data)), // Success
+                    Err(_) => None, // Failed specific parse for known type
+                }
+            }
+            "ElapsedTime" => {
+                // Attempt to deserialize into the specific data struct
+                match serde_json::from_value::<ElapsedTimeData>(node.clone()) {
+                    Ok(data) => Some(Event::ElapsedTime(data)), // Success
+                    Err(_) => None, // Failed specific parse for known type
+                }
+            }
             // Add cases for other known event types here
             // "SomeOtherEvent" => { ... }
             _ => None, // Unknown "Type"
@@ -122,16 +172,10 @@ mod tests {
         // Assert that parsing succeeded (no invalid JSON lines)
         assert!(result.is_ok(), "Parsing failed: {:?}", result.err());
 
-        // Assert the number of *recognized* events parsed
-        // The expected count depends on how many CloggingPair events are in the file.
-        // Let's check if at least one was found for now.
+        // The expected count is the sum of CloggingPair (308), ClogInterface (479),
+        // and ElapsedTime (1)
         let events = result.unwrap();
-
-        dbg!(&events);
-
-        // println!("Parsed {} events", events.len()); // Optional: print count for debugging
-        assert!(!events.is_empty(), "No CloggingPair events were parsed");
-        // If you know the exact expected count, use: assert_eq!(events.len(), EXPECTED_COUNT);
+        assert_eq!(events.len(), 788, "Expected 788 events (CloggingPair + ClogInterface + ElapsedTime), found {}", events.len());
     }
 
     #[test]
