@@ -1,3 +1,4 @@
+use regex::Regex;
 use serde::Deserialize;
 use serde_json::Value as JsonNode;
 use std::fs::File;
@@ -14,6 +15,10 @@ pub enum Event {
     ClogInterface(ClogInterfaceData),
     /// Represents an ElapsedTime event.
     ElapsedTime(ElapsedTimeData),
+    /// Represents a SimulatedMachineStart event.
+    SimulatedMachineStart(SimulatedMachineStartData),
+    /// Represents a SimulatedMachineProcess event.
+    SimulatedMachineProcess(SimulatedMachineProcessData),
     // Add other specific event variants here
 }
 
@@ -61,6 +66,43 @@ pub struct ElapsedTimeData {
     // Severity, DateTime, Machine, ID, ThreadID, LogGroup ignored
 }
 
+/// Data specific to a SimulatedMachineStart event.
+#[derive(Debug, Deserialize, PartialEq)]
+pub struct SimulatedMachineStartData {
+    #[serde(rename = "Time")]
+    pub timestamp: String,
+    #[serde(rename = "ID")]
+    pub id: String,
+    #[serde(rename = "MachineIPs")]
+    pub machine_ips: String, // Can be space-separated
+    #[serde(rename = "ProcessClass")]
+    pub process_class: String,
+    #[serde(rename = "DataHall")]
+    pub data_hall: String,
+    #[serde(rename = "Locality")]
+    pub locality: String, // Contains dcid, machineid, etc.
+    // These fields are extracted from Locality after deserialization
+    pub dcid: Option<String>,
+    pub machineid: Option<String>,
+    // Other fields ignored: Severity, DateTime, Machine, Folder0, CFolder0, SSL, Processes, BootCount, Restarting, UseSeedFile, ZoneId, ThreadID, LogGroup
+}
+
+/// Data specific to a SimulatedMachineProcess event.
+#[derive(Debug, Deserialize, PartialEq)]
+pub struct SimulatedMachineProcessData {
+    #[serde(rename = "Time")]
+    pub timestamp: String,
+    #[serde(rename = "ID")]
+    pub id: String,
+    #[serde(rename = "Address")]
+    pub address: String, // e.g., "2.0.1.0:1"
+    #[serde(rename = "DataHall")]
+    pub data_hall: String,
+    #[serde(rename = "ZoneId")]
+    pub zone_id: String,
+    // Other fields ignored: Severity, DateTime, Machine, Folder, ThreadID, LogGroup
+}
+
 impl Event {
     /// Returns the timestamp associated with the event, parsed from string.
     /// Returns 0.0 if parsing fails.
@@ -71,6 +113,8 @@ impl Event {
             Event::CloggingPair(data) => data.timestamp.parse().unwrap_or(0.0),
             Event::ClogInterface(data) => data.timestamp.parse().unwrap_or(0.0),
             Event::ElapsedTime(data) => data.timestamp.parse().unwrap_or(0.0),
+            Event::SimulatedMachineStart(data) => data.timestamp.parse().unwrap_or(0.0),
+            Event::SimulatedMachineProcess(data) => data.timestamp.parse().unwrap_or(0.0),
         }
     }
 }
@@ -148,6 +192,24 @@ fn parse_event_from_node(node: &JsonNode) -> Option<Event> {
                     Err(_) => None, // Failed specific parse for known type
                 }
             }
+            "SimulatedMachineStart" => {
+                match serde_json::from_value::<SimulatedMachineStartData>(node.clone()) {
+                    Ok(mut data) => {
+                        // Extract optional dcid and machineid from Locality string
+                        data.dcid = extract_from_locality(&data.locality, "dcid").map(String::from);
+                        data.machineid =
+                            extract_from_locality(&data.locality, "machineid").map(String::from);
+                        Some(Event::SimulatedMachineStart(data))
+                    }
+                    Err(_) => None,
+                }
+            }
+            "SimulatedMachineProcess" => {
+                match serde_json::from_value::<SimulatedMachineProcessData>(node.clone()) {
+                    Ok(data) => Some(Event::SimulatedMachineProcess(data)),
+                    Err(_) => None,
+                }
+            }
             // Add cases for other known event types here
             // "SomeOtherEvent" => { ... }
             _ => None, // Unknown "Type"
@@ -155,6 +217,16 @@ fn parse_event_from_node(node: &JsonNode) -> Option<Event> {
     } else {
         None // Missing "Type" field
     }
+}
+
+/// Helper function to extract values from Locality string using regex
+fn extract_from_locality<'a>(locality: &'a str, key: &str) -> Option<&'a str> {
+    // Build a simple regex dynamically - more robust would be pre-compiling
+    let pattern = format!(r#"\b{}=(\[[^]]*\]|[^ ]*)"#, regex::escape(key));
+    let re = Regex::new(&pattern).ok()?; // Handle regex compilation error
+    re.captures(locality)
+        .and_then(|caps| caps.get(1))
+        .map(|m| m.as_str())
 }
 
 #[cfg(test)]
@@ -173,9 +245,71 @@ mod tests {
         assert!(result.is_ok(), "Parsing failed: {:?}", result.err());
 
         // The expected count is the sum of CloggingPair (308), ClogInterface (479),
-        // and ElapsedTime (1)
+        // ElapsedTime (1), SimulatedMachineStart (29), SimulatedMachineProcess (29)
+        // Total = 308 + 479 + 1 + 29 + 29 = 846
         let events = result.unwrap();
-        assert_eq!(events.len(), 788, "Expected 788 events (CloggingPair + ClogInterface + ElapsedTime), found {}", events.len());
+        let start_count = events
+            .iter()
+            .filter(|e| matches!(e, Event::SimulatedMachineStart(_)))
+            .count();
+        let process_count = events
+            .iter()
+            .filter(|e| matches!(e, Event::SimulatedMachineProcess(_)))
+            .count();
+        let clog_pair_count = events
+            .iter()
+            .filter(|e| matches!(e, Event::CloggingPair(_)))
+            .count();
+        let clog_if_count = events
+            .iter()
+            .filter(|e| matches!(e, Event::ClogInterface(_)))
+            .count();
+        let elapsed_count = events
+            .iter()
+            .filter(|e| matches!(e, Event::ElapsedTime(_)))
+            .count();
+
+        assert_eq!(clog_pair_count, 308, "Incorrect CloggingPair count");
+        assert_eq!(clog_if_count, 479, "Incorrect ClogInterface count");
+        assert_eq!(elapsed_count, 1, "Incorrect ElapsedTime count");
+        assert_eq!(start_count, 29, "Incorrect SimulatedMachineStart count");
+        assert_eq!(process_count, 29, "Incorrect SimulatedMachineProcess count");
+        assert_eq!(
+            events.len(),
+            846,
+            "Expected 846 total events, found {}",
+            events.len()
+        );
+
+        let process_event = events
+            .iter()
+            .find_map(|e| match e {
+                Event::SimulatedMachineProcess(data) if data.id == "68f8a443716dcad2" => Some(data),
+                _ => None,
+            })
+            .expect("Expected to find SimulatedMachineProcess event for ID 68f8a443716dcad2");
+
+        assert_eq!(process_event.timestamp, "0.000000");
+        assert_eq!(process_event.address, "2.0.1.0:1");
+        assert_eq!(process_event.data_hall, "0".to_string());
+        assert_eq!(process_event.zone_id, "a2da9142f354b315465f9d57c6b5a01b");
+
+        // Check the first SimulatedMachineStart event
+        let start_event = events
+            .iter()
+            .find_map(|e| match e {
+                Event::SimulatedMachineStart(data) if data.id == "68f8a443716dcad2" => Some(data),
+                _ => None,
+            })
+            .expect("Expected to find SimulatedMachineStart event for ID 68f8a443716dcad2");
+
+        assert_eq!(start_event.timestamp, "0.000000");
+        assert_eq!(start_event.machine_ips, "2.0.1.0");
+        assert_eq!(start_event.process_class, "unset");
+        assert_eq!(start_event.data_hall, "0".to_string());
+        assert_eq!(start_event.locality, "zoneid=a2da9142f354b315465f9d57c6b5a01b processid=[unset] machineid=b50aea195b5bb79cea41a2c5f649aa19 dcid=0 data_hall=0");
+
+        // Test the post-processing extraction (these fields are not directly in the JSON)
     }
 
     #[test]
