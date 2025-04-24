@@ -21,6 +21,8 @@ pub enum Event {
     SimulatedMachineProcess(SimulatedMachineProcessData),
     /// Represents an Assassination event.
     Assassination(AssassinationData),
+    /// Represents a CoordinatorsChange event.
+    CoordinatorsChange(CoordinatorsChangeData),
     // Add other specific event variants here
 }
 
@@ -121,6 +123,16 @@ pub struct AssassinationData {
     // Other fields ignored
 }
 
+/// Data specific to a CoordinatorsChange event.
+#[derive(Debug, Deserialize, PartialEq)]
+pub struct CoordinatorsChangeData {
+    #[serde(rename = "Time")]
+    pub timestamp: String,
+    #[serde(rename = "NewCoordinatorsKey")]
+    pub new_coordinators_key: String,
+    // Other fields ignored: Severity, DateTime, Machine, ID, Auto, ThreadID, LogGroup, Roles
+}
+
 #[repr(i64)] // Specify underlying representation
 #[derive(Debug, PartialEq, Clone, Copy, Deserialize)]
 #[serde(try_from = "String")]
@@ -164,6 +176,7 @@ impl Event {
             Event::SimulatedMachineStart(data) => data.timestamp.parse().unwrap_or(0.0),
             Event::SimulatedMachineProcess(data) => data.timestamp.parse().unwrap_or(0.0),
             Event::Assassination(data) => data.timestamp.parse().unwrap_or(0.0),
+            Event::CoordinatorsChange(data) => data.timestamp.parse().unwrap_or(0.0),
         }
     }
 }
@@ -265,6 +278,12 @@ fn parse_event_from_node(node: &JsonNode) -> Option<Event> {
                     Err(_) => None,
                 }
             }
+            "CoordinatorsChangeBeforeCommit" => {
+                match serde_json::from_value::<CoordinatorsChangeData>(node.clone()) {
+                    Ok(data) => Some(Event::CoordinatorsChange(data)),
+                    Err(_) => None,
+                }
+            }
             // Add cases for other known event types here
             // "SomeOtherEvent" => { ... }
             _ => None, // Unknown "Type"
@@ -327,17 +346,22 @@ mod tests {
             .iter()
             .filter(|e| matches!(e, Event::Assassination(_)))
             .count();
+        let coord_change_count = events
+            .iter()
+            .filter(|e| matches!(e, Event::CoordinatorsChange(_)))
+            .count();
 
         assert_eq!(clog_pair_count, 308, "Incorrect CloggingPair count");
         assert_eq!(clog_if_count, 479, "Incorrect ClogInterface count");
         assert_eq!(elapsed_count, 1, "Incorrect ElapsedTime count");
         assert_eq!(start_count, 29, "Incorrect SimulatedMachineStart count");
         assert_eq!(process_count, 29, "Incorrect SimulatedMachineProcess count");
-        assert_eq!(assassination_count, 1, "Incorrect Assassination count"); // Add assertion for Assassination
+        assert_eq!(assassination_count, 1, "Incorrect Assassination count");
+        assert_eq!(coord_change_count, 1, "Incorrect CoordinatorsChange count");
         assert_eq!(
             events.len(),
-            847, // Update expected total count
-            "Expected 847 total events, found {}",
+            848, // Update expected total count
+            "Expected 848 total events, found {}",
             events.len()
         );
 

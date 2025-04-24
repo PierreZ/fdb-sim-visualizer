@@ -42,9 +42,3 @@ testDuration = 300.0 # Match main workload duration
 changeMode = "Auto" # Let the workload decide config changes
 minChanges = 1      # Minimum number of config changes
 maxChanges = 5      # Maximum number of config changes
-
-# Define the Rollback workload
-[[workload]]
-name = "Rollback"
-testDuration = 300.0 # Match main workload duration
-triggerRollbackProb = 0.02 # Probability per second of attempting a rollback
