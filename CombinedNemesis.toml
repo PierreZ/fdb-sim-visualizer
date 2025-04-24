@@ -1,0 +1,50 @@
+# CombinedNemesis.toml
+#
+# Runs a simple ReadWrite workload concurrently with RandomClogging,
+# MachineAttrition, ChangeConfig, and Rollback nemesis workloads.
+
+[general]
+description = "Basic ReadWrite test with multiple concurrent nemesis workloads"
+runtype = "simulation" # This is a simulation test
+
+[test]
+testTitle = "CombinedNemesisTest"
+tags = ["nexus", "combined", "nemesis"]
+
+# Define the main workload (ReadWrite)
+[[workload]]
+name = "ReadWrite"
+testDuration = 300.0 # Run for 5 minutes
+actorCount = 10
+nodeCount = 10000
+
+# Define the RandomClogging workload
+[[workload]]
+name = "RandomClogging"
+testDuration = 300.0 # Match main workload duration
+clogPairProb = 0.05  # Probability of clogging a pair per second
+clogMachineProb = 0.01 # Probability of clogging a machine per second
+clogDuration = 5.0    # Duration of each clog event
+
+# Define the MachineAttrition workload
+[[workload]]
+name = "MachineAttrition"
+testDuration = 300.0 # Match main workload duration
+machinesToKill = 2   # Kill 2 machines during the test
+processesToKill = 0  # Don't target individual processes
+reboot = true        # Allow reboots
+meanDelay = 10.0     # Average delay between kill actions
+
+# Define the ChangeConfig workload
+[[workload]]
+name = "ChangeConfig"
+testDuration = 300.0 # Match main workload duration
+changeMode = "Auto" # Let the workload decide config changes
+minChanges = 1      # Minimum number of config changes
+maxChanges = 5      # Maximum number of config changes
+
+# Define the Rollback workload
+[[workload]]
+name = "Rollback"
+testDuration = 300.0 # Match main workload duration
+triggerRollbackProb = 0.02 # Probability per second of attempting a rollback
