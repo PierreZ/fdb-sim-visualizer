@@ -1,6 +1,7 @@
 [configuration]
 minimumReplication = 3
 minimumRegions = 3
+buggify = false
 
 [[test]]
 testTitle = 'DiskFailureCycle'

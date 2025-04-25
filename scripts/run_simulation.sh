@@ -2,7 +2,7 @@
 
 # Check if an argument was provided
 if [ -z "$1" ]; then
-  echo "Usage: $0 <attrition|disk>"
+  echo "Usage: $0 <attrition>"
   exit 1
 fi
 
@@ -12,11 +12,8 @@ case "$1" in
   attrition)
     TEST_FILE="testfiles/Attritions.toml"
     ;;
-  disk)
-    TEST_FILE="testfiles/DiskFailureCycle.toml"
-    ;;
   *)
-    echo "Invalid argument: $1. Use 'attrition' or 'disk'."
+    echo "Invalid argument: $1. Use 'attrition'."
     exit 1
     ;;
 esac
