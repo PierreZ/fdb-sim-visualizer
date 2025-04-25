@@ -4,8 +4,8 @@ use serde_json::Value as JsonNode;
 use std::fs::File;
 use std::io::{self, BufRead, BufReader};
 use std::path::Path;
-use thiserror::Error;
 use std::str::FromStr;
+use thiserror::Error;
 
 /// Represents different types of log events.
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
@@ -242,17 +242,18 @@ impl Into<Event> for CorruptedBlockData {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Eq, Hash, Clone, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum KillType {
-    KillInstantly,        // 0
-    InjectFaults,         // 1
-    FailDisk,             // 2
-    RebootAndDelete,      // 3
+    KillInstantly,          // 0
+    InjectFaults,           // 1
+    FailDisk,               // 2
+    RebootAndDelete,        // 3
     RebootProcessAndDelete, // 4
     RebootProcessAndSwitch, // 5
-    Reboot,               // 6
-    RebootProcess,        // 7
-    None,                 // 8
+    Reboot,                 // 6
+    RebootProcess,          // 7
+    None,                   // 8
+    Unknown,                // Added for parsing errors
 }
 
 impl FromStr for KillType {
@@ -269,7 +270,7 @@ impl FromStr for KillType {
             5 => Ok(KillType::RebootProcessAndSwitch),
             6 => Ok(KillType::Reboot),
             7 => Ok(KillType::RebootProcess),
-            _ => Ok(KillType::None),
+            _ => Ok(KillType::Unknown),
         }
     }
 }
@@ -374,7 +375,9 @@ fn parse_event_from_node(node: &JsonNode) -> Option<Event> {
         } // Use DiskSwapData struct
         "SetDiskFailure" => try_parse_event_data::<SetDiskFailureData>(node).map(|e| e.into()),
         "CorruptedBlock" => try_parse_event_data::<CorruptedBlockData>(node).map(|e| e.into()),
-        "KillMachineProcess" => try_parse_event_data::<KillMachineProcessData>(node).map(|e| e.into()),
+        "KillMachineProcess" => {
+            try_parse_event_data::<KillMachineProcessData>(node).map(|e| e.into())
+        }
         _ => None, // Unknown event type
     }
 }
@@ -603,13 +606,18 @@ mod tests {
         assert_eq!(KillType::from_str("1").unwrap(), KillType::InjectFaults);
         assert_eq!(KillType::from_str("2").unwrap(), KillType::FailDisk);
         assert_eq!(KillType::from_str("3").unwrap(), KillType::RebootAndDelete);
-        assert_eq!(KillType::from_str("4").unwrap(), KillType::RebootProcessAndDelete);
-        assert_eq!(KillType::from_str("5").unwrap(), KillType::RebootProcessAndSwitch);
+        assert_eq!(
+            KillType::from_str("4").unwrap(),
+            KillType::RebootProcessAndDelete
+        );
+        assert_eq!(
+            KillType::from_str("5").unwrap(),
+            KillType::RebootProcessAndSwitch
+        );
         assert_eq!(KillType::from_str("6").unwrap(), KillType::Reboot);
         assert_eq!(KillType::from_str("7").unwrap(), KillType::RebootProcess);
-        assert_eq!(KillType::from_str("8").unwrap(), KillType::None);
+        assert_eq!(KillType::from_str("8").unwrap(), KillType::Unknown);
     }
 
     // ... other tests remain unchanged ...
-
 }
