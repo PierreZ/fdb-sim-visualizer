@@ -15,11 +15,7 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
-
-    - name: Setup Rust toolchain
-      uses: actions/setup-rust@v1
-      with:
-        toolchain: stable
+    - uses: dtolnay/rust-toolchain@stable
 
     - name: Build
       run: cargo build --verbose

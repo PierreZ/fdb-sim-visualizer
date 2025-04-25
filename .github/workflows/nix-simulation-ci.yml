@@ -10,6 +10,12 @@ jobs:
   simulate-and-visualize:
     runs-on: ubuntu-latest
 
+    strategy:
+      matrix:
+        simulation_type: ["attrition"]
+
+    name: Simulate (${{ matrix.simulation_type }}) and Visualize
+
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
@@ -26,7 +32,7 @@ jobs:
       run: chmod +x ./scripts/run_simulation.sh
 
     - name: Run Simulation via Nix Flake
-      run: nix develop --command ./scripts/run_simulation.sh disk
+      run: nix develop --command ./scripts/run_simulation.sh ${{ matrix.simulation_type }}
 
     - name: Run Visualizer on Trace via Nix Flake
       run: |
@@ -36,4 +42,4 @@ jobs:
           exit 1
         fi
         echo "Found trace file: $TRACE_FILE"
-        nix develop --command fdb-sim-visualizer "$TRACE_FILE"
+        nix develop --command cargo run -- "$TRACE_FILE"
