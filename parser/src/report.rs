@@ -1,8 +1,8 @@
 use serde::{Deserialize, Serialize};
 
 use crate::parser::{
-    AssassinationData, ClogInterfaceData, CloggingPairData, CoordinatorsChangeData,
-    CorruptedBlockData, DiskSwapData, Event, KillType, SetDiskFailureData,
+    ClogInterfaceData, CloggingPairData, CoordinatorsChangeData,
+    CorruptedBlockData, DiskSwapData, Event, SetDiskFailureData,
 };
 use std::collections::HashMap;
 use std::fmt;
@@ -54,10 +54,6 @@ pub struct SimulationReport {
     pub clog_interfaces: Vec<ClogInterfaceData>,
     /// Summary statistics for ClogInterface events, grouped by queue name.
     pub clog_interface_summary: HashMap<String, ClogInterfaceSummary>,
-    /// List of Assassination events, sorted by timestamp.
-    pub assassinations: Vec<AssassinationData>,
-    /// Count of assassinations grouped by KillType.
-    pub assassination_summary: HashMap<String, usize>,
     /// List of CoordinatorsChange events, sorted by timestamp.
     pub coordinators_changes: Vec<CoordinatorsChangeData>,
     /// Total count of coordinator changes.
@@ -115,20 +111,6 @@ impl fmt::Display for SimulationReport {
             }
         }
 
-        writeln!(f, "  Assassinations (by KillType):")?;
-        if self.assassination_summary.is_empty() {
-            writeln!(f, "    None")?;
-        } else {
-            // Sort keys for consistent output
-            let mut sorted_kill_types: Vec<_> = self.assassination_summary.keys().collect();
-            sorted_kill_types.sort();
-            for kill_type in sorted_kill_types {
-                if let Some(count) = self.assassination_summary.get(kill_type) {
-                    writeln!(f, "    {}: {}", kill_type, count)?;
-                }
-            }
-        }
-
         writeln!(
             f,
             "  Coordinator Changes: {}",
@@ -167,7 +149,6 @@ pub fn create_simulation_report(events: &[Event]) -> SimulationReport {
     // Initialize vectors for other event types
     let mut clogging_pairs = Vec::new();
     let mut clog_interfaces = Vec::new();
-    let mut assassinations = Vec::new();
     let mut coordinators_changes = Vec::new();
     let mut disk_swaps = Vec::new();
     let mut set_disk_failures = Vec::new();
@@ -203,7 +184,6 @@ pub fn create_simulation_report(events: &[Event]) -> SimulationReport {
                     },
                 );
             }
-            Event::Assassination(data) => assassinations.push(data.clone()),
             Event::CoordinatorsChange(data) => coordinators_changes.push(data.clone()),
             Event::DiskSwap(data) => disk_swaps.push(data.clone()),
             Event::SetDiskFailure(data) => set_disk_failures.push(data.clone()),
@@ -220,11 +200,6 @@ pub fn create_simulation_report(events: &[Event]) -> SimulationReport {
             .unwrap_or(std::cmp::Ordering::Equal)
     });
     clog_interfaces.sort_by(|a, b| {
-        parse_ts(&a.timestamp)
-            .partial_cmp(&parse_ts(&b.timestamp))
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
-    assassinations.sort_by(|a, b| {
         parse_ts(&a.timestamp)
             .partial_cmp(&parse_ts(&b.timestamp))
             .unwrap_or(std::cmp::Ordering::Equal)
@@ -305,17 +280,6 @@ pub fn create_simulation_report(events: &[Event]) -> SimulationReport {
         })
         .collect();
 
-    // --- Calculate Assassination Summary (Grouped by KillType) ---
-    let mut assassination_summary: HashMap<String, usize> = HashMap::new();
-    for assassination in &assassinations {
-        let kill_type = match assassination.reboot.as_deref() {
-            Some("1") => KillType::RebootAndDelete,
-            _ => KillType::Unknown(-1),
-        };
-        *assassination_summary
-            .entry(kill_type.to_string())
-            .or_insert(0) += 1;
-    }
 
     // --- Calculate Coordinator Change Count ---
     let coordinators_change_count = coordinators_changes.len();
@@ -328,8 +292,6 @@ pub fn create_simulation_report(events: &[Event]) -> SimulationReport {
         clogging_pair_summary,
         clog_interfaces,
         clog_interface_summary,
-        assassinations,
-        assassination_summary,
         coordinators_changes,
         coordinators_change_count,
         machine_details,
@@ -343,7 +305,8 @@ pub fn create_simulation_report(events: &[Event]) -> SimulationReport {
 #[cfg(test)]
 mod tests {
     use super::*; // Import items from outer module (report)
-    use crate::parser::{parse_log_file, KillType}; // Import parse_log_file
+    use crate::parser::{parse_log_file, }; // Import parse_log_file
+
     use std::path::Path; // Need Path for parse_log_file
 
     #[test]
@@ -391,19 +354,6 @@ mod tests {
         assert!((send_summary.min_seconds - 0.000158).abs() < 1e-6);
         assert!((send_summary.mean_seconds - 0.361933).abs() < 1e-6);
         assert!((send_summary.max_seconds - 4.221570).abs() < 1e-6);
-
-        assert_eq!(report.assassinations.len(), 10);
-        assert_eq!(report.assassination_summary.len(), 1);
-        let expected_kill_type_str = KillType::RebootAndDelete.to_string();
-        assert_eq!(
-            *report
-                .assassination_summary
-                .get(&expected_kill_type_str)
-                .unwrap_or(&0),
-            10,
-            "Incorrect count for {} assassinations",
-            expected_kill_type_str
-        );
 
         assert_eq!(report.coordinators_changes.len(), 1);
         assert_eq!(report.coordinators_change_count, 1);
@@ -457,8 +407,6 @@ mod tests {
         assert!(report.clogging_pair_summary.is_none());
         assert!(report.clog_interfaces.is_empty());
         assert!(report.clog_interface_summary.is_empty());
-        assert!(report.assassinations.is_empty());
-        assert!(report.assassination_summary.is_empty());
         assert!(report.coordinators_changes.is_empty());
         assert_eq!(report.coordinators_change_count, 0);
         assert!(report.machine_details.is_empty());

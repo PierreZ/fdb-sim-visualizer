@@ -1,7 +1,6 @@
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonNode;
-use std::fmt;
 use std::fs::File;
 use std::io::{self, BufRead, BufReader};
 use std::path::Path;
@@ -18,8 +17,6 @@ pub enum Event {
     ElapsedTime(ElapsedTimeData),
     /// Represents a SimulatedMachineStart event.
     SimulatedMachineStart(SimulatedMachineStartData),
-    /// Represents an Assassination event.
-    Assassination(AssassinationData),
     /// Represents a CoordinatorsChange event.
     CoordinatorsChange(CoordinatorsChangeData),
     /// Represents a ProgramStart event.
@@ -138,27 +135,6 @@ impl Into<Event> for SimulatedMachineStartData {
     }
 }
 
-/// Data specific to an Assassination event.
-#[derive(Debug, Deserialize, PartialEq, Clone, Serialize)]
-pub struct AssassinationData {
-    #[serde(rename = "Time")]
-    pub timestamp: String,
-    #[serde(rename = "Machine")]
-    pub machine: String,
-    #[serde(rename = "TargetMachine")]
-    pub target_machine: Option<String>,
-    #[serde(rename = "TargetDatacenter")]
-    pub target_datacenter: Option<String>,
-    #[serde(rename = "Reboot")]
-    pub reboot: Option<String>,
-    // Other fields ignored
-}
-
-impl Into<Event> for AssassinationData {
-    fn into(self) -> Event {
-        Event::Assassination(self)
-    }
-}
 
 /// Data specific to a CoordinatorsChange event.
 #[derive(Debug, Deserialize, PartialEq, Clone, Serialize)]
@@ -264,34 +240,6 @@ impl Into<Event> for CorruptedBlockData {
     }
 }
 
-#[repr(i64)] // Specify underlying representation
-#[derive(Debug, PartialEq, Clone, Copy, Serialize)]
-pub enum KillType {
-    Reboot = 0,
-    RebootAndDelete = 1,
-    KillInstantly = 2,
-    InjectFaults = 3,
-    FailDisk = 4,
-    RebootProcessAndSwitch = 5,
-    RebootProcess = 6,
-    Unknown(i64),
-}
-
-impl fmt::Display for KillType {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            KillType::Reboot => write!(f, "Reboot"),
-            KillType::RebootAndDelete => write!(f, "RebootAndDelete"),
-            KillType::KillInstantly => write!(f, "KillInstantly"),
-            KillType::InjectFaults => write!(f, "InjectFaults"),
-            KillType::FailDisk => write!(f, "FailDisk"),
-            KillType::RebootProcessAndSwitch => write!(f, "RebootProcessAndSwitch"),
-            KillType::RebootProcess => write!(f, "RebootProcess"),
-            KillType::Unknown(val) => write!(f, "Unknown({})", val),
-        }
-    }
-}
-
 impl Event {
     /// Returns the timestamp associated with the event, parsed from string.
     /// Returns 0.0 if parsing fails.
@@ -303,7 +251,6 @@ impl Event {
             Event::ClogInterface(data) => data.timestamp.parse().unwrap_or(0.0),
             Event::ElapsedTime(data) => data.timestamp.parse().unwrap_or(0.0),
             Event::SimulatedMachineStart(data) => data.timestamp.parse().unwrap_or(0.0),
-            Event::Assassination(data) => data.timestamp.parse().unwrap_or(0.0),
             Event::CoordinatorsChange(data) => data.timestamp.parse().unwrap_or(0.0),
             Event::ProgramStart(data) => data.timestamp.parse().unwrap_or(0.0),
             Event::DiskSwap(data) => data.timestamp.parse().unwrap_or(0.0),
@@ -359,7 +306,6 @@ fn parse_event_from_node(node: &JsonNode) -> Option<Event> {
                 Err(_) => None,
             }
         }
-        "Assassination" => try_parse_event_data::<AssassinationData>(node),
         "CoordinatorsChangeBeforeCommit" => try_parse_event_data::<CoordinatorsChangeData>(node),
         "ProgramStart" => try_parse_event_data::<ProgramStartData>(node).map(|e| e.into()),
         "SimulatedMachineFolderSwap" => {
@@ -443,50 +389,6 @@ mod tests {
     fn test_parse_io_error() {
         let result = parse_log_file("non_existent_file.log");
         assert!(matches!(result, Err(ParsingError::Io(_))));
-    }
-
-    #[test]
-    fn test_parse_assassination_event() {
-        let json_line = json!({
-          "Severity": "30", "Time": "138.462824", "DateTime": "2025-04-24T08:56:00Z", "Type": "Assassination", "Machine": "3.4.3.1:1", "TargetMachine": null, "TargetDatacenter": "1", "Reboot": "6", "ThreadID": "123456789", "LogGroup": "default"
-        });
-        let node: JsonNode =
-            serde_json::from_str(&json_line.to_string()).expect("Failed to parse JSON line");
-        let event = parse_event_from_node(&node);
-
-        assert!(event.is_some(), "Event should be parsed");
-        match event.unwrap() {
-            Event::Assassination(data) => {
-                assert_eq!(data.timestamp, "138.462824");
-                assert_eq!(data.machine, "3.4.3.1:1");
-                assert!(data.target_machine.is_none());
-                assert_eq!(data.target_datacenter.as_deref(), Some("1"));
-                assert_eq!(data.reboot.as_deref(), Some("6"));
-            }
-            _ => panic!("Parsed event is not an Assassination event"),
-        }
-    }
-
-    #[test]
-    fn test_parse_assassination_event_datacenter() {
-        let json_line = json!({
-          "Severity": "30", "Time": "138.462824", "DateTime": "2025-04-24T08:56:00Z", "Type": "Assassination", "Machine": "3.4.3.1:1", "TargetMachine": null, "TargetDatacenter": "dc1", "Reboot": "2", "ThreadID": "123456789", "LogGroup": "default"
-        });
-        let node: JsonNode =
-            serde_json::from_str(&json_line.to_string()).expect("Failed to parse JSON line");
-        let event = parse_event_from_node(&node);
-
-        assert!(event.is_some(), "Event should be parsed");
-        match event.unwrap() {
-            Event::Assassination(data) => {
-                assert_eq!(data.timestamp, "138.462824");
-                assert_eq!(data.machine, "3.4.3.1:1");
-                assert!(data.target_machine.is_none());
-                assert_eq!(data.target_datacenter.as_deref(), Some("dc1"));
-                assert_eq!(data.reboot.as_deref(), Some("2"));
-            }
-            _ => panic!("Parsed event is not an Assassination event"),
-        }
     }
 
     #[test]

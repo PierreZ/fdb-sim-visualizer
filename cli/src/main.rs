@@ -170,22 +170,6 @@ fn run(cli: Cli) -> Result<(), CliError> {
                 }
             }
 
-            // --- Assassination Summary --- //
-            if !report.assassination_summary.is_empty() {
-                println!("  Assassinations (by KillType):");
-                // Sort kill types for consistent output
-                let mut sorted_kill_types: Vec<_> = report.assassination_summary.keys().collect();
-                sorted_kill_types.sort();
-                for kill_type in sorted_kill_types {
-                    if let Some(count) = report.assassination_summary.get(kill_type) {
-                        if *count > 0 {
-                            // Check count for each type
-                            println!("    {}: {}", kill_type, count);
-                        }
-                    }
-                }
-            }
-
             // --- Corrupted Block Summary --- //
             if !report.corrupted_blocks.is_empty() {
                 println!("  Corrupted Blocks: {}", report.corrupted_blocks.len());
