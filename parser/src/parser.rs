@@ -1,10 +1,11 @@
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonNode;
-use std::fmt;
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::{self, BufRead, BufReader};
 use std::path::Path;
+use std::str::FromStr;
 use thiserror::Error;
 
 /// Represents different types of log events.
@@ -18,8 +19,6 @@ pub enum Event {
     ElapsedTime(ElapsedTimeData),
     /// Represents a SimulatedMachineStart event.
     SimulatedMachineStart(SimulatedMachineStartData),
-    /// Represents an Assassination event.
-    Assassination(AssassinationData),
     /// Represents a CoordinatorsChange event.
     CoordinatorsChange(CoordinatorsChangeData),
     /// Represents a ProgramStart event.
@@ -30,6 +29,10 @@ pub enum Event {
     SetDiskFailure(SetDiskFailureData),
     /// Represents a CorruptedBlock event.
     CorruptedBlock(CorruptedBlockData),
+    /// Represents a KillMachineProcess event.
+    KillMachineProcess(KillMachineProcessData),
+    /// Represents a SimulatorConfig event.
+    SimulatorConfig(SimulatorConfigData),
     // Add other specific event variants here
 }
 
@@ -138,28 +141,6 @@ impl Into<Event> for SimulatedMachineStartData {
     }
 }
 
-/// Data specific to an Assassination event.
-#[derive(Debug, Deserialize, PartialEq, Clone, Serialize)]
-pub struct AssassinationData {
-    #[serde(rename = "Time")]
-    pub timestamp: String,
-    #[serde(rename = "Machine")]
-    pub machine: String,
-    #[serde(rename = "TargetMachine")]
-    pub target_machine: Option<String>,
-    #[serde(rename = "TargetDatacenter")]
-    pub target_datacenter: Option<String>,
-    #[serde(rename = "Reboot")]
-    pub reboot: Option<String>,
-    // Other fields ignored
-}
-
-impl Into<Event> for AssassinationData {
-    fn into(self) -> Event {
-        Event::Assassination(self)
-    }
-}
-
 /// Data specific to a CoordinatorsChange event.
 #[derive(Debug, Deserialize, PartialEq, Clone, Serialize)]
 pub struct CoordinatorsChangeData {
@@ -264,31 +245,98 @@ impl Into<Event> for CorruptedBlockData {
     }
 }
 
-#[repr(i64)] // Specify underlying representation
-#[derive(Debug, PartialEq, Clone, Copy, Serialize)]
+#[derive(Debug, PartialEq, Eq, Hash, Clone, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum KillType {
-    Reboot = 0,
-    RebootAndDelete = 1,
-    KillInstantly = 2,
-    InjectFaults = 3,
-    FailDisk = 4,
-    RebootProcessAndSwitch = 5,
-    RebootProcess = 6,
-    Unknown(i64),
+    KillInstantly,          // 0
+    InjectFaults,           // 1
+    FailDisk,               // 2
+    RebootAndDelete,        // 3
+    RebootProcessAndDelete, // 4
+    RebootProcessAndSwitch, // 5
+    Reboot,                 // 6
+    RebootProcess,          // 7
+    None,                   // 8
+    Unknown,                // Added for parsing errors
 }
 
-impl fmt::Display for KillType {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            KillType::Reboot => write!(f, "Reboot"),
-            KillType::RebootAndDelete => write!(f, "RebootAndDelete"),
-            KillType::KillInstantly => write!(f, "KillInstantly"),
-            KillType::InjectFaults => write!(f, "InjectFaults"),
-            KillType::FailDisk => write!(f, "FailDisk"),
-            KillType::RebootProcessAndSwitch => write!(f, "RebootProcessAndSwitch"),
-            KillType::RebootProcess => write!(f, "RebootProcess"),
-            KillType::Unknown(val) => write!(f, "Unknown({})", val),
+impl FromStr for KillType {
+    type Err = std::num::ParseIntError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let val = s.parse::<u8>()?;
+        match val {
+            0 => Ok(KillType::KillInstantly),
+            1 => Ok(KillType::InjectFaults),
+            2 => Ok(KillType::FailDisk),
+            3 => Ok(KillType::RebootAndDelete),
+            4 => Ok(KillType::RebootProcessAndDelete),
+            5 => Ok(KillType::RebootProcessAndSwitch),
+            6 => Ok(KillType::Reboot),
+            7 => Ok(KillType::RebootProcess),
+            _ => Ok(KillType::Unknown),
         }
+    }
+}
+
+#[derive(Debug, Deserialize, PartialEq, Clone, Serialize)]
+pub struct KillMachineProcessData {
+    #[serde(rename = "Time")]
+    pub timestamp: String,
+    #[serde(rename = "KillType")]
+    pub raw_kill_type: String,
+    #[serde(rename = "Process")]
+    pub process: String,
+    #[serde(rename = "StartingClass")]
+    pub starting_class: String,
+    #[serde(rename = "Failed")]
+    pub failed: String,
+    #[serde(rename = "Excluded")]
+    pub excluded: String,
+    #[serde(rename = "Cleared")]
+    pub cleared: String,
+    #[serde(rename = "Rebooting")]
+    pub rebooting: String,
+}
+
+impl Into<Event> for KillMachineProcessData {
+    fn into(self) -> Event {
+        Event::KillMachineProcess(self)
+    }
+}
+
+/// Represents the raw data structure deserialized directly from the JSON for SimulatorConfig.
+#[derive(Debug, Deserialize, Serialize, PartialEq, Clone)]
+pub struct SimulatorConfigData {
+    #[serde(rename = "Time")]
+    pub timestamp: String,
+    #[serde(rename = "Machine")]
+    pub machine: String,
+    #[serde(rename = "ConfigString")]
+    pub config_string: String,
+    #[serde(default)]
+    pub config: HashMap<String, String>,
+}
+
+impl SimulatorConfigData {
+    pub fn populate_config(&mut self) {
+        let parts: Vec<&str> = self.config_string.split_whitespace().collect();
+        let mut i = 0;
+        while i < parts.len() {
+            let part = parts[i];
+            if let Some((key, value)) = part.split_once(":=").or_else(|| part.split_once('=')) {
+                self.config.insert(key.to_string(), value.to_string());
+                i += 1;
+            } else {
+                self.config.insert(part.to_string(), "".to_string()); // Key without value
+                i += 1;
+            }
+        }
+    }
+}
+
+impl Into<Event> for SimulatorConfigData {
+    fn into(self) -> Event {
+        Event::SimulatorConfig(self)
     }
 }
 
@@ -303,12 +351,13 @@ impl Event {
             Event::ClogInterface(data) => data.timestamp.parse().unwrap_or(0.0),
             Event::ElapsedTime(data) => data.timestamp.parse().unwrap_or(0.0),
             Event::SimulatedMachineStart(data) => data.timestamp.parse().unwrap_or(0.0),
-            Event::Assassination(data) => data.timestamp.parse().unwrap_or(0.0),
             Event::CoordinatorsChange(data) => data.timestamp.parse().unwrap_or(0.0),
             Event::ProgramStart(data) => data.timestamp.parse().unwrap_or(0.0),
             Event::DiskSwap(data) => data.timestamp.parse().unwrap_or(0.0),
             Event::SetDiskFailure(data) => data.timestamp.parse().unwrap_or(0.0),
             Event::CorruptedBlock(data) => data.time.parse().unwrap_or(0.0),
+            Event::KillMachineProcess(data) => data.timestamp.parse().unwrap_or(0.0),
+            Event::SimulatorConfig(data) => data.timestamp.parse().unwrap_or(0.0),
         }
     }
 }
@@ -359,7 +408,6 @@ fn parse_event_from_node(node: &JsonNode) -> Option<Event> {
                 Err(_) => None,
             }
         }
-        "Assassination" => try_parse_event_data::<AssassinationData>(node),
         "CoordinatorsChangeBeforeCommit" => try_parse_event_data::<CoordinatorsChangeData>(node),
         "ProgramStart" => try_parse_event_data::<ProgramStartData>(node).map(|e| e.into()),
         "SimulatedMachineFolderSwap" => {
@@ -367,6 +415,16 @@ fn parse_event_from_node(node: &JsonNode) -> Option<Event> {
         } // Use DiskSwapData struct
         "SetDiskFailure" => try_parse_event_data::<SetDiskFailureData>(node).map(|e| e.into()),
         "CorruptedBlock" => try_parse_event_data::<CorruptedBlockData>(node).map(|e| e.into()),
+        "KillMachineProcess" => {
+            try_parse_event_data::<KillMachineProcessData>(node).map(|e| e.into())
+        }
+        "SimulatorConfig" => match serde_json::from_value::<SimulatorConfigData>(node.clone()) {
+            Ok(mut data) => {
+                data.populate_config();
+                Some(Event::SimulatorConfig(data))
+            }
+            Err(_) => None,
+        },
         _ => None, // Unknown event type
     }
 }
@@ -446,50 +504,6 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_assassination_event() {
-        let json_line = json!({
-          "Severity": "30", "Time": "138.462824", "DateTime": "2025-04-24T08:56:00Z", "Type": "Assassination", "Machine": "3.4.3.1:1", "TargetMachine": null, "TargetDatacenter": "1", "Reboot": "6", "ThreadID": "123456789", "LogGroup": "default"
-        });
-        let node: JsonNode =
-            serde_json::from_str(&json_line.to_string()).expect("Failed to parse JSON line");
-        let event = parse_event_from_node(&node);
-
-        assert!(event.is_some(), "Event should be parsed");
-        match event.unwrap() {
-            Event::Assassination(data) => {
-                assert_eq!(data.timestamp, "138.462824");
-                assert_eq!(data.machine, "3.4.3.1:1");
-                assert!(data.target_machine.is_none());
-                assert_eq!(data.target_datacenter.as_deref(), Some("1"));
-                assert_eq!(data.reboot.as_deref(), Some("6"));
-            }
-            _ => panic!("Parsed event is not an Assassination event"),
-        }
-    }
-
-    #[test]
-    fn test_parse_assassination_event_datacenter() {
-        let json_line = json!({
-          "Severity": "30", "Time": "138.462824", "DateTime": "2025-04-24T08:56:00Z", "Type": "Assassination", "Machine": "3.4.3.1:1", "TargetMachine": null, "TargetDatacenter": "dc1", "Reboot": "2", "ThreadID": "123456789", "LogGroup": "default"
-        });
-        let node: JsonNode =
-            serde_json::from_str(&json_line.to_string()).expect("Failed to parse JSON line");
-        let event = parse_event_from_node(&node);
-
-        assert!(event.is_some(), "Event should be parsed");
-        match event.unwrap() {
-            Event::Assassination(data) => {
-                assert_eq!(data.timestamp, "138.462824");
-                assert_eq!(data.machine, "3.4.3.1:1");
-                assert!(data.target_machine.is_none());
-                assert_eq!(data.target_datacenter.as_deref(), Some("dc1"));
-                assert_eq!(data.reboot.as_deref(), Some("2"));
-            }
-            _ => panic!("Parsed event is not an Assassination event"),
-        }
-    }
-
-    #[test]
     fn test_parse_program_start_event_with_seed() {
         let json_line = json!({
           "Severity": "10", "Time": "0.000000", "DateTime": "2025-04-24T08:55:36Z", "Type": "ProgramStart", "Machine": "0.0.0.0:0", "ID": "0000000000000000", "RandomSeed": "2837976339", "SourceVersion": "412531b5c97fa84343da94888cc949a4d29e8c29", "Version": "7.3.43", "PackageName": "7.3", "FileSystem": "", "DataFolder": "", "WorkingDirectory": "/root", "ClusterFile": "", "ConnectionString": "", "ActualTime": "1745484936", "EnvironmentKnobOptions": "none", "CommandLine": "fdbserver -r simulation -f /root/logical_db.toml -b on --trace-format json -L ./logs", "BuggifyEnabled": "1", "FaultInjectionEnabled": "1", "MemoryLimit": "8589934592", "VirtualMemoryLimit": "0", "ProtocolVersion": "0x0FDB00B073000000", "ThreadID": "10058538621798076542", "LogGroup": "default", "TrackLatestType": "Original"
@@ -531,7 +545,7 @@ mod tests {
 
     #[test]
     fn test_parse_set_disk_failure_event() {
-        let json_line = json!({
+        let json_data = json!({
           "Severity": "10",
           "Time": "146.900748",
           "DateTime": "2025-04-25T09:26:05Z",
@@ -548,19 +562,23 @@ mod tests {
           "LogGroup": "default",
           "Roles": "CD,LR,SS,TL"
         });
+        let node: JsonNode =
+            serde_json::from_str(&json_data.to_string()).expect("Failed to parse JSON line");
+        let event = parse_event_from_node(&node);
 
-        let expected_event = Event::SetDiskFailure(SetDiskFailureData {
-            timestamp: "146.900748".to_string(),
-            machine: "2.1.1.0:1".to_string(),
-            stall_interval: "5".to_string(),
-            stall_period: "5".to_string(),
-            stall_until: "151.901".to_string(),
-            throttle_period: "30".to_string(),
-            throttle_until: "176.901".to_string(),
-        });
-
-        let parsed_event = parse_event_from_node(&json_line);
-        assert_eq!(parsed_event, Some(expected_event));
+        assert!(event.is_some(), "Event should be parsed");
+        match event.unwrap() {
+            Event::SetDiskFailure(data) => {
+                assert_eq!(data.timestamp, "146.900748");
+                assert_eq!(data.machine, "2.1.1.0:1");
+                assert_eq!(data.stall_interval, "5");
+                assert_eq!(data.stall_period, "5");
+                assert_eq!(data.stall_until, "151.901");
+                assert_eq!(data.throttle_period, "30");
+                assert_eq!(data.throttle_until, "176.901");
+            }
+            _ => panic!("Parsed event is not a SetDiskFailure event"),
+        }
     }
 
     #[test]
@@ -586,14 +604,112 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_unknown_event() {
-        let json_line = json!({
-          "Severity": "10", "Time": "93.070647", "DateTime": "2025-04-25T09:40:11Z", "Type": "UnknownEvent", "Machine": "2.0.1.3:1", "ID": "0000000000000000", "Filename": "/path/to/storage.sqlite", "Block": "20", "ThreadID": "123", "LogGroup": "default", "Roles": "BK,CP,SS,TL"
+    fn test_parse_kill_machine_process_event() {
+        let json_data = json!({
+          "Severity": "10",
+          "Time": "10.0",
+          "DateTime": "2024-07-29T16:30:00Z",
+          "Type": "KillMachineProcess",
+          "Machine": "127.0.0.1:4000",
+          "ID": "test_id",
+          "LogGroup": "default",
+          "Roles": "SS",
+          "TrackLatest": "",
+          "KillType": "6", // Represents Reboot
+          "Process": "127.0.0.1:4001",
+          "StartingClass": "Storage",
+          "Failed": "false",
+          "Excluded": "false",
+          "Cleared": "false",
+          "Rebooting": "true"
         });
-        let node: JsonNode =
-            serde_json::from_str(&json_line.to_string()).expect("Failed to parse JSON line");
-        let event = parse_event_from_node(&node);
 
-        assert!(event.is_none(), "Event should not be parsed");
+        let event = parse_event_from_node(&json_data).unwrap();
+        let expected_data = KillMachineProcessData {
+            timestamp: "10.0".to_string(),
+            raw_kill_type: "6".to_string(),
+            process: "127.0.0.1:4001".to_string(),
+            starting_class: "Storage".to_string(),
+            failed: "false".to_string(),
+            excluded: "false".to_string(),
+            cleared: "false".to_string(),
+            rebooting: "true".to_string(),
+        };
+
+        assert_eq!(event, Event::KillMachineProcess(expected_data));
+    }
+
+    #[test]
+    fn test_kill_type_from_str() {
+        assert_eq!(KillType::from_str("0").unwrap(), KillType::KillInstantly);
+        assert_eq!(KillType::from_str("1").unwrap(), KillType::InjectFaults);
+        assert_eq!(KillType::from_str("2").unwrap(), KillType::FailDisk);
+        assert_eq!(KillType::from_str("3").unwrap(), KillType::RebootAndDelete);
+        assert_eq!(
+            KillType::from_str("4").unwrap(),
+            KillType::RebootProcessAndDelete
+        );
+        assert_eq!(
+            KillType::from_str("5").unwrap(),
+            KillType::RebootProcessAndSwitch
+        );
+        assert_eq!(KillType::from_str("6").unwrap(), KillType::Reboot);
+        assert_eq!(KillType::from_str("7").unwrap(), KillType::RebootProcess);
+        assert_eq!(KillType::from_str("8").unwrap(), KillType::Unknown);
+    }
+
+    #[test]
+    fn test_parse_simulator_config_event() {
+        let json_str = r#"
+        {
+          "Severity": "10",
+          "Time": "0.000000",
+          "DateTime": "2025-04-24T12:47:58Z",
+          "Type": "SimulatorConfig",
+          "Machine": "0.0.0.0:0",
+          "ID": "0000000000000000",
+          "ConfigString": "new backup_worker_enabled:=0 blob_granules_enabled:=0 commit_proxies:=4 encryption_at_rest_mode=disabled grv_proxies:=1 log_engine=ssd-2 log_spill:=1 log_version:=6 logs:=3 perpetual_storage_wiggle:=0 perpetual_storage_wiggle_engine=none proxies:=5 three_data_hall resolvers:=1 storage_engine=memory storage_migration_type=disabled tenant_mode=disabled usable_regions:=1",
+          "ThreadID": "4687316415922983387",
+          "LogGroup": "default"
+        }
+        "#;
+        let node: JsonNode = serde_json::from_str(json_str).unwrap();
+        let event = parse_event_from_node(&node).unwrap();
+
+        let mut expected_config = HashMap::new();
+        expected_config.insert("new".to_string(), "".to_string());
+        expected_config.insert("backup_worker_enabled".to_string(), "0".to_string());
+        expected_config.insert("blob_granules_enabled".to_string(), "0".to_string());
+        expected_config.insert("commit_proxies".to_string(), "4".to_string());
+        expected_config.insert(
+            "encryption_at_rest_mode".to_string(),
+            "disabled".to_string(),
+        );
+        expected_config.insert("grv_proxies".to_string(), "1".to_string());
+        expected_config.insert("log_engine".to_string(), "ssd-2".to_string());
+        expected_config.insert("log_spill".to_string(), "1".to_string());
+        expected_config.insert("log_version".to_string(), "6".to_string());
+        expected_config.insert("logs".to_string(), "3".to_string());
+        expected_config.insert("perpetual_storage_wiggle".to_string(), "0".to_string());
+        expected_config.insert(
+            "perpetual_storage_wiggle_engine".to_string(),
+            "none".to_string(),
+        );
+        expected_config.insert("proxies".to_string(), "5".to_string());
+        expected_config.insert("three_data_hall".to_string(), "".to_string());
+        expected_config.insert("resolvers".to_string(), "1".to_string());
+        expected_config.insert("storage_engine".to_string(), "memory".to_string());
+        expected_config.insert("storage_migration_type".to_string(), "disabled".to_string());
+        expected_config.insert("tenant_mode".to_string(), "disabled".to_string());
+        expected_config.insert("usable_regions".to_string(), "1".to_string());
+
+        let expected_event = Event::SimulatorConfig(SimulatorConfigData {
+            timestamp: "0.000000".to_string(),
+            machine: "0.0.0.0:0".to_string(),
+            config: expected_config,
+            config_string: "new backup_worker_enabled:=0 blob_granules_enabled:=0 commit_proxies:=4 encryption_at_rest_mode=disabled grv_proxies:=1 log_engine=ssd-2 log_spill:=1 log_version:=6 logs:=3 perpetual_storage_wiggle:=0 perpetual_storage_wiggle_engine=none proxies:=5 three_data_hall resolvers:=1 storage_engine=memory storage_migration_type=disabled tenant_mode=disabled usable_regions:=1".to_string(),
+        });
+
+        assert_eq!(event, expected_event);
     }
 }
