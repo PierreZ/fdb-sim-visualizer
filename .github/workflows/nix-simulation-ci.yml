@@ -1,0 +1,39 @@
+name: Nix Simulation CI
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  simulate-and-visualize:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Install Nix
+      uses: cachix/install-nix-action@v26
+      with:
+        install_url: https://releases.nixos.org/nix/nix-2.18.1/install
+        extra_nix_config: |
+          access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}
+          experimental-features = nix-command flakes
+
+    - name: Make simulation script executable
+      run: chmod +x ./scripts/run_simulation.sh
+
+    - name: Run Simulation via Nix Flake
+      run: nix develop --command ./scripts/run_simulation.sh disk
+
+    - name: Run Visualizer on Trace via Nix Flake
+      run: |
+        TRACE_FILE=$(ls -t events/trace.*.json | head -n 1)
+        if [ -z "$TRACE_FILE" ]; then
+          echo "Error: No trace file found in ./events/"
+          exit 1
+        fi
+        echo "Found trace file: $TRACE_FILE"
+        nix develop --command fdb-sim-visualizer "$TRACE_FILE"
