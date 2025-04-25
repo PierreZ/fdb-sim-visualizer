@@ -1,5 +1,25 @@
 {
   "nodes": {
+    "fdb-overlay": {
+      "inputs": {
+        "nixpkgs": [
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1745569211,
+        "narHash": "sha256-qJSxvi8pN01Dm29JZ+zhajyVRZc+YKAFasT3vSQx+4k=",
+        "owner": "foundationdb-rs",
+        "repo": "overlay",
+        "rev": "45b115a490d71263f5454dd9c92e03127f42b6a9",
+        "type": "github"
+      },
+      "original": {
+        "owner": "foundationdb-rs",
+        "repo": "overlay",
+        "type": "github"
+      }
+    },
     "flake-utils": {
       "inputs": {
         "systems": "systems"
@@ -52,6 +72,7 @@
     },
     "root": {
       "inputs": {
+        "fdb-overlay": "fdb-overlay",
         "flake-utils": "flake-utils",
         "nixpkgs": "nixpkgs",
         "rust-overlay": "rust-overlay"
@@ -62,11 +83,11 @@
         "nixpkgs": "nixpkgs_2"
       },
       "locked": {
-        "lastModified": 1745462120,
-        "narHash": "sha256-TbVjPOl+Cg5vZ7TIn1KpQ8SOfHKD6OEgu84b6YSCfKE=",
+        "lastModified": 1745548521,
+        "narHash": "sha256-xyliq8oS5OnzXjHRGr92RtmrtYI/dflf2gSEo0wMFjc=",
         "owner": "oxalica",
         "repo": "rust-overlay",
-        "rev": "79d3acd1a7e67fb9315fa5c5556eb6adf93dc2da",
+        "rev": "eb0afb4ac0720d55c29e88eb29432103d73ae11d",
         "type": "github"
       },
       "original": {

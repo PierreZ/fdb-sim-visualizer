@@ -6,6 +6,8 @@ use serde_json;
 use std::path::PathBuf;
 use std::process;
 use thiserror::Error;
+use std::time::Duration;
+use humantime::format_duration;
 
 /// Enum defining the possible output formats for the report.
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum, Debug)]
@@ -62,15 +64,27 @@ fn run(cli: Cli) -> Result<(), CliError> {
     // Handle output based on the requested format
     match cli.output_format {
         OutputFormat::Summary => {
-            println!("Parsed {} events.", events.len());
-            println!("--- Simulation Report (Summary) ---");
+            println!("Parsed {} events.\n", events.len());
             println!("FoundationDB Simulation Report");
             println!("==============================");
             if let Some(seed) = &report.seed {
                 println!("Seed: {}", seed);
             }
-            if let Some(time) = &report.elapsed_time {
-                println!("Elapsed Time: {} seconds", time);
+            if let Some(time_str) = &report.elapsed_time {
+                if let Ok(secs) = time_str.parse::<f64>() {
+                    let duration = Duration::from_secs_f64(secs);
+                    println!("Simulated Time: {}", format_duration(duration));
+                } else {
+                     println!("Simulated Time: {} seconds (could not parse)", time_str); // Fallback
+                }
+            }
+            if let Some(real_str) = &report.real_time {
+                 if let Ok(secs) = real_str.parse::<f64>() {
+                    let duration = Duration::from_secs_f64(secs);
+                    println!("Real Time: {}", format_duration(duration));
+                } else {
+                     println!("Real Time: {} seconds (could not parse)", real_str); // Fallback
+                }
             }
             println!(""); // Spacer
 
@@ -89,9 +103,30 @@ fn run(cli: Cli) -> Result<(), CliError> {
                 let mut sorted_dcs: Vec<_> = dc_counts.keys().collect();
                 sorted_dcs.sort(); // Sort by dc_id for consistent output
                 for dc_id in sorted_dcs {
+                    // Count roles by class type for the current datacenter
+                    let mut role_counts: std::collections::HashMap<String, usize> =
+                        std::collections::HashMap::new();
+                    report
+                        .machine_details
+                        .values()
+                        .filter(|m| m.dc_id == Some(dc_id.clone()))
+                        .map(|m| m.class_type.as_deref().unwrap_or("unset").to_string())
+                        .for_each(|role| *role_counts.entry(role).or_insert(0) += 1);
+
+                    // Format the role counts into a string "role1: count1, role2: count2, ..."
+                    let mut sorted_roles: Vec<_> = role_counts.keys().collect();
+                    sorted_roles.sort(); // Sort roles alphabetically
+                    let roles_str = sorted_roles
+                        .iter()
+                        .map(|role| format!("{}: {}", role, role_counts[*role]))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+
                     println!(
-                        "    Datacenter {}: {} machines", // Updated per-DC format
-                        dc_id, dc_counts[dc_id]
+                        "    Datacenter {}: {} machines ({})", // Updated per-DC format with role counts
+                        dc_id,
+                        dc_counts[dc_id],
+                        roles_str // Use the formatted role counts string
                     );
                 }
                 println!(); // Blank line after summary
