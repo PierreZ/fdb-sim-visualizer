@@ -1,17 +1,14 @@
-use serde::{Deserialize, Serialize};
-
-use crate::parser::{
-    ClogInterfaceData, CloggingPairData, CoordinatorsChangeData, CorruptedBlockData, DiskSwapData,
-    Event, KillMachineProcessData, KillType, SetDiskFailureData,
-};
+use crate::parser::*;
+use colored::Colorize; // Import colored functionality
+use comfy_table::{presets::UTF8_FULL, Cell, ContentArrangement, Table}; // Import comfy-table
 use humantime::format_duration;
+use serde::{Deserialize, Serialize}; // Add this back
 use std::collections::HashMap;
 use std::fmt;
 use std::str::FromStr;
 use std::time::Duration;
 
-// --- Summary Structs (Restored) --- //
-
+// --- Struct Definitions ---
 /// Holds summary statistics for CloggingPair events.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CloggingPairSummary {
@@ -77,95 +74,217 @@ pub struct SimulationReport {
 
 impl fmt::Display for SimulationReport {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "FoundationDB Simulation Report")?;
-        writeln!(f, "==============================")?;
+        // --- Main Title ---
+        writeln!(
+            f,
+            "{}",
+            "FoundationDB Simulation Report".bright_blue().bold()
+        )?;
+        writeln!(f, "{}", "==============================".bright_blue())?;
+        writeln!(f)?;
+
+        // --- Basic Info Table ---
+        let mut info_table = Table::new();
+        info_table
+            // Using the same preset as other tables for consistency
+            .load_preset(comfy_table::presets::UTF8_FULL) // Use UTF8_FULL
+            .set_content_arrangement(ContentArrangement::Dynamic) // Revert to Dynamic
+            .set_header(vec!["Parameter", "Value"]);
 
         if let Some(seed) = &self.seed {
-            writeln!(f, "Seed: {}", seed)?;
+            info_table.add_row(vec![Cell::new("Seed"), Cell::new(seed)]);
         }
         if let Some(time_str) = &self.elapsed_time {
-            match time_str.parse::<f64>() {
-                Ok(secs) => {
-                    let duration = Duration::from_secs_f64(secs);
-                    writeln!(f, "Simulated Time: {}", format_duration(duration))?;
-                }
-                Err(_) => {
-                    writeln!(f, "Simulated Time: {} seconds (could not parse)", time_str)?;
-                }
-            }
+            let value_str = match time_str.parse::<f64>() {
+                Ok(secs) => format!("{}", format_duration(Duration::from_secs_f64(secs))),
+                Err(_) => format!("{} seconds (parse error)", time_str),
+            };
+            info_table.add_row(vec![Cell::new("Simulated Time"), Cell::new(value_str)]);
         }
         if let Some(real_str) = &self.real_time {
-            match real_str.parse::<f64>() {
-                Ok(secs) => {
-                    let duration = Duration::from_secs_f64(secs);
-                    writeln!(f, "Real Time: {}", format_duration(duration))?;
-                }
-                Err(_) => {
-                    writeln!(f, "Real Time: {} seconds (could not parse)", real_str)?;
+            let value_str = match real_str.parse::<f64>() {
+                Ok(secs) => format!("{}", format_duration(Duration::from_secs_f64(secs))),
+                Err(_) => format!("{} seconds (parse error)", real_str),
+            };
+            info_table.add_row(vec![Cell::new("Real Time"), Cell::new(value_str)]);
+        }
+
+        // Only print the table if it has rows
+        if info_table.row_count() > 0 {
+            writeln!(f, "{}", info_table)?;
+            writeln!(f)?; // Add extra newline for spacing
+        }
+
+        // --- Cluster Topology Section ---
+        if !self.machine_details.is_empty() {
+            writeln!(f, "{}", "--- Cluster Topology Summary ---".bright_magenta())?;
+            let mut topology_table = Table::new();
+            topology_table
+                .load_preset(UTF8_FULL)
+                .set_content_arrangement(ContentArrangement::Dynamic)
+                .set_header(vec!["DC ID", "Machine Count", "Class Type Summary"]);
+
+            // Group machines by DC ID
+            let mut machines_by_dc: HashMap<String, Vec<&MachineInfo>> = HashMap::new();
+            for machine_info in self.machine_details.values() {
+                let dc_key = machine_info.dc_id.as_deref().unwrap_or("N/A").to_string();
+                machines_by_dc.entry(dc_key).or_default().push(machine_info);
+            }
+
+            // Sort DCs by ID
+            let mut sorted_dcs: Vec<_> = machines_by_dc.keys().cloned().collect();
+            sorted_dcs.sort();
+
+            for dc_id in sorted_dcs {
+                if let Some(machines) = machines_by_dc.get(&dc_id) {
+                    let machine_count = machines.len();
+
+                    // Count class types within this DC
+                    let mut class_counts: HashMap<String, usize> = HashMap::new();
+                    for machine in machines {
+                        let class_key = machine.class_type.as_deref().unwrap_or("N/A").to_string();
+                        *class_counts.entry(class_key).or_insert(0) += 1;
+                    }
+
+                    // Create summary string
+                    let mut summary_parts: Vec<String> = class_counts
+                        .iter()
+                        .map(|(class_type, count)| format!("{}: {}", class_type, count))
+                        .collect();
+                    summary_parts.sort(); // Sort alphabetically by class type for consistency
+                    let summary_str = summary_parts.join(", ");
+
+                    topology_table.add_row(vec![
+                        Cell::new(&dc_id),
+                        Cell::new(machine_count),
+                        Cell::new(summary_str),
+                    ]);
                 }
             }
-        }
-        writeln!(f, "")?;
 
-        writeln!(f, "--- Chaos injection Summary ---")?;
+            writeln!(f, "{}", topology_table)?;
+            writeln!(f)?; // Add extra newline for spacing
+        }
+
+        // --- Chaos Summary Section ---
+        writeln!(f, "{}", "--- Chaos injection Summary ---".bright_yellow())?;
+
+        // Clogging Pairs (Table)
         if let Some(summary) = &self.clogging_pair_summary {
-            writeln!(f, "  Clogging Pairs:")?;
-            writeln!(f, "    Count: {}", summary.count)?;
+            if summary.count > 0 {
+                writeln!(f, "  {}:", "Clogging Pairs".green())?;
+                let mut table = Table::new();
+                table
+                    .load_preset(UTF8_FULL)
+                    .set_content_arrangement(ContentArrangement::Dynamic)
+                    .set_header(vec![
+                        "Count",
+                        "Min Duration (s)",
+                        "Mean Duration (s)",
+                        "Max Duration (s)",
+                    ]);
+                table.add_row(vec![
+                    Cell::new(summary.count),
+                    Cell::new(format!("{:.6}", summary.min_seconds)),
+                    Cell::new(format!("{:.6}", summary.mean_seconds)),
+                    Cell::new(format!("{:.6}", summary.max_seconds)),
+                ]);
+                writeln!(f, "{}", table)?;
+            }
+        }
+
+        // Clogged Interfaces (Table)
+        if !self.clog_interface_summary.is_empty() {
+            writeln!(f, "  {}:", "Clogged Interfaces (by Queue)".green())?;
+            let mut table = Table::new();
+            table
+                .load_preset(UTF8_FULL)
+                .set_content_arrangement(ContentArrangement::Dynamic)
+                .set_header(vec![
+                    "Queue",
+                    "Count",
+                    "Min Delay (s)",
+                    "Mean Delay (s)",
+                    "Max Delay (s)",
+                ]);
+
+            let mut sorted_queues: Vec<_> = self.clog_interface_summary.keys().collect();
+            sorted_queues.sort();
+            for queue_name in sorted_queues {
+                if let Some(summary) = self.clog_interface_summary.get(queue_name) {
+                    if summary.count > 0 {
+                        table.add_row(vec![
+                            Cell::new(queue_name),
+                            Cell::new(summary.count),
+                            Cell::new(format!("{:.6}", summary.min_seconds)),
+                            Cell::new(format!("{:.6}", summary.mean_seconds)),
+                            Cell::new(format!("{:.6}", summary.max_seconds)),
+                        ]);
+                    }
+                }
+            }
+            // Only print the table if it has rows
+            if table.row_count() > 0 {
+                writeln!(f, "{}", table)?;
+            }
+        }
+
+        // Other simple summaries (colored labels)
+        if self.coordinators_change_count > 0 {
             writeln!(
                 f,
-                "    Duration (sec): Min={:.6}, Mean={:.6}, Max={:.6}",
-                summary.min_seconds, summary.mean_seconds, summary.max_seconds
+                "  {}: {}",
+                "Coordinator Changes".green(),
+                self.coordinators_change_count
+            )?;
+        }
+        if !self.disk_swaps.is_empty() {
+            writeln!(f, "  {}: {}", "Disk Swaps".green(), self.disk_swaps.len())?;
+        }
+        if !self.set_disk_failures.is_empty() {
+            writeln!(
+                f,
+                "  {}: {}",
+                "Disk Failures".green(),
+                self.set_disk_failures.len()
+            )?;
+        }
+        if !self.corrupted_blocks.is_empty() {
+            writeln!(
+                f,
+                "  {}: {}",
+                "Corrupted Blocks".green(),
+                self.corrupted_blocks.len()
             )?;
         }
 
-        writeln!(f, "  Clogged Interfaces (by Queue):")?;
-        // Sort keys for consistent output
-        let mut sorted_queues: Vec<_> = self.clog_interface_summary.keys().collect();
-        sorted_queues.sort();
-        for queue_name in sorted_queues {
-            if let Some(summary) = self.clog_interface_summary.get(queue_name) {
-                writeln!(f, "    Queue '{}':", queue_name)?;
-                writeln!(f, "      Count: {}", summary.count)?;
-                writeln!(
-                    f,
-                    "      Delay (sec): Min={:.6}, Mean={:.6}, Max={:.6}",
-                    summary.min_seconds, summary.mean_seconds, summary.max_seconds
-                )?;
-            }
-        }
+        // Process Kills (Table)
+        if !self.kill_machine_process_summary.is_empty() {
+            writeln!(f, "  {}:", "Process Kills (by Type)".green())?;
+            let mut table = Table::new();
+            table
+                .load_preset(UTF8_FULL)
+                .set_content_arrangement(ContentArrangement::Dynamic)
+                .set_header(vec!["Kill Type", "Count"]);
 
-        writeln!(
-            f,
-            "  Coordinator Changes: {}",
-            self.coordinators_change_count
-        )?;
-        writeln!(f, "  Disk Swaps: {}", self.disk_swaps.len())?;
-        writeln!(f, "  Disk Failures: {}", self.set_disk_failures.len())?;
-        writeln!(f, "  Corrupted Blocks: {}", self.corrupted_blocks.len())?;
-
-        writeln!(f, "  Process Kills (by Type):")?;
-        // Sort keys (KillType enum variants) for consistent output
-        let mut sorted_kill_types: Vec<_> = self.kill_machine_process_summary.keys().collect();
-        sorted_kill_types.sort(); // Requires Ord on KillType
-        if sorted_kill_types.is_empty() {
-            writeln!(f, "    None")?;
-        } else {
+            let mut sorted_kill_types: Vec<_> = self.kill_machine_process_summary.keys().collect();
+            sorted_kill_types.sort();
             for kill_type in sorted_kill_types {
                 if let Some(count) = self.kill_machine_process_summary.get(kill_type) {
-                    writeln!(f, "    {:?}: {}", kill_type, count)?;
+                    if *count > 0 {
+                        table.add_row(vec![
+                            Cell::new(format!("{:?}", kill_type)),
+                            Cell::new(*count),
+                        ]);
+                    }
                 }
             }
+            // Only print the table if it has rows
+            if table.row_count() > 0 {
+                writeln!(f, "{}", table)?;
+            }
         }
-        writeln!(f, "")?;
-
-        // Initially, don't print the long vectors or detailed maps
-        // Add sections here later if needed, possibly behind a flag.
-        writeln!(f, "--- Details ---")?;
-        writeln!(f, "  Machines Found: {}", self.machine_details.len())?;
-        writeln!(
-            f,
-            "(Raw event lists and detailed machine info omitted for brevity)"
-        )?;
+        writeln!(f)?; // Add a final newline for spacing
 
         Ok(())
     }
