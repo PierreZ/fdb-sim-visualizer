@@ -153,6 +153,7 @@ pub fn create_simulation_report(events: &[Event]) -> SimulationReport {
     let mut disk_swaps = Vec::new();
     let mut set_disk_failures = Vec::new();
     let mut corrupted_blocks = Vec::new();
+    let mut kill_machine_processes = Vec::new();
 
     for event in events {
         match event {
@@ -188,6 +189,7 @@ pub fn create_simulation_report(events: &[Event]) -> SimulationReport {
             Event::DiskSwap(data) => disk_swaps.push(data.clone()),
             Event::SetDiskFailure(data) => set_disk_failures.push(data.clone()),
             Event::CorruptedBlock(data) => corrupted_blocks.push(data.clone()),
+            Event::KillMachineProcess(data) => kill_machine_processes.push(data.clone()),
         }
     }
 

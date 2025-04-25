@@ -5,6 +5,7 @@ use std::fs::File;
 use std::io::{self, BufRead, BufReader};
 use std::path::Path;
 use thiserror::Error;
+use std::str::FromStr;
 
 /// Represents different types of log events.
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
@@ -27,6 +28,8 @@ pub enum Event {
     SetDiskFailure(SetDiskFailureData),
     /// Represents a CorruptedBlock event.
     CorruptedBlock(CorruptedBlockData),
+    /// Represents a KillMachineProcess event.
+    KillMachineProcess(KillMachineProcessData),
     // Add other specific event variants here
 }
 
@@ -135,7 +138,6 @@ impl Into<Event> for SimulatedMachineStartData {
     }
 }
 
-
 /// Data specific to a CoordinatorsChange event.
 #[derive(Debug, Deserialize, PartialEq, Clone, Serialize)]
 pub struct CoordinatorsChangeData {
@@ -240,6 +242,64 @@ impl Into<Event> for CorruptedBlockData {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum KillType {
+    KillInstantly,        // 0
+    InjectFaults,         // 1
+    FailDisk,             // 2
+    RebootAndDelete,      // 3
+    RebootProcessAndDelete, // 4
+    RebootProcessAndSwitch, // 5
+    Reboot,               // 6
+    RebootProcess,        // 7
+    None,                 // 8
+}
+
+impl FromStr for KillType {
+    type Err = std::num::ParseIntError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let val = s.parse::<u8>()?;
+        match val {
+            0 => Ok(KillType::KillInstantly),
+            1 => Ok(KillType::InjectFaults),
+            2 => Ok(KillType::FailDisk),
+            3 => Ok(KillType::RebootAndDelete),
+            4 => Ok(KillType::RebootProcessAndDelete),
+            5 => Ok(KillType::RebootProcessAndSwitch),
+            6 => Ok(KillType::Reboot),
+            7 => Ok(KillType::RebootProcess),
+            _ => Ok(KillType::None),
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, PartialEq, Clone, Serialize)]
+pub struct KillMachineProcessData {
+    #[serde(rename = "Time")]
+    pub timestamp: String,
+    #[serde(rename = "KillType")]
+    pub raw_kill_type: String,
+    #[serde(rename = "Process")]
+    pub process: String,
+    #[serde(rename = "StartingClass")]
+    pub starting_class: String,
+    #[serde(rename = "Failed")]
+    pub failed: String,
+    #[serde(rename = "Excluded")]
+    pub excluded: String,
+    #[serde(rename = "Cleared")]
+    pub cleared: String,
+    #[serde(rename = "Rebooting")]
+    pub rebooting: String,
+}
+
+impl Into<Event> for KillMachineProcessData {
+    fn into(self) -> Event {
+        Event::KillMachineProcess(self)
+    }
+}
+
 impl Event {
     /// Returns the timestamp associated with the event, parsed from string.
     /// Returns 0.0 if parsing fails.
@@ -256,6 +316,7 @@ impl Event {
             Event::DiskSwap(data) => data.timestamp.parse().unwrap_or(0.0),
             Event::SetDiskFailure(data) => data.timestamp.parse().unwrap_or(0.0),
             Event::CorruptedBlock(data) => data.time.parse().unwrap_or(0.0),
+            Event::KillMachineProcess(data) => data.timestamp.parse().unwrap_or(0.0),
         }
     }
 }
@@ -313,6 +374,7 @@ fn parse_event_from_node(node: &JsonNode) -> Option<Event> {
         } // Use DiskSwapData struct
         "SetDiskFailure" => try_parse_event_data::<SetDiskFailureData>(node).map(|e| e.into()),
         "CorruptedBlock" => try_parse_event_data::<CorruptedBlockData>(node).map(|e| e.into()),
+        "KillMachineProcess" => try_parse_event_data::<KillMachineProcessData>(node).map(|e| e.into()),
         _ => None, // Unknown event type
     }
 }
@@ -433,7 +495,7 @@ mod tests {
 
     #[test]
     fn test_parse_set_disk_failure_event() {
-        let json_line = json!({
+        let json_data = json!({
           "Severity": "10",
           "Time": "146.900748",
           "DateTime": "2025-04-25T09:26:05Z",
@@ -461,7 +523,7 @@ mod tests {
             throttle_until: "176.901".to_string(),
         });
 
-        let parsed_event = parse_event_from_node(&json_line);
+        let parsed_event = parse_event_from_node(&json_data);
         assert_eq!(parsed_event, Some(expected_event));
     }
 
@@ -498,4 +560,56 @@ mod tests {
 
         assert!(event.is_none(), "Event should not be parsed");
     }
+
+    #[test]
+    fn test_parse_kill_machine_process_event() {
+        let json_data = json!({
+          "Severity": "10",
+          "Time": "10.0",
+          "DateTime": "2024-07-29T16:30:00Z",
+          "Type": "KillMachineProcess",
+          "Machine": "127.0.0.1:4000",
+          "ID": "test_id",
+          "LogGroup": "default",
+          "Roles": "SS",
+          "TrackLatest": "",
+          "KillType": "6", // Represents Reboot
+          "Process": "127.0.0.1:4001",
+          "StartingClass": "Storage",
+          "Failed": "false",
+          "Excluded": "false",
+          "Cleared": "false",
+          "Rebooting": "true"
+        });
+
+        let event = parse_event_from_node(&json_data).unwrap();
+        let expected_data = KillMachineProcessData {
+            timestamp: "10.0".to_string(),
+            raw_kill_type: "6".to_string(),
+            process: "127.0.0.1:4001".to_string(),
+            starting_class: "Storage".to_string(),
+            failed: "false".to_string(),
+            excluded: "false".to_string(),
+            cleared: "false".to_string(),
+            rebooting: "true".to_string(),
+        };
+
+        assert_eq!(event, Event::KillMachineProcess(expected_data));
+    }
+
+    #[test]
+    fn test_kill_type_from_str() {
+        assert_eq!(KillType::from_str("0").unwrap(), KillType::KillInstantly);
+        assert_eq!(KillType::from_str("1").unwrap(), KillType::InjectFaults);
+        assert_eq!(KillType::from_str("2").unwrap(), KillType::FailDisk);
+        assert_eq!(KillType::from_str("3").unwrap(), KillType::RebootAndDelete);
+        assert_eq!(KillType::from_str("4").unwrap(), KillType::RebootProcessAndDelete);
+        assert_eq!(KillType::from_str("5").unwrap(), KillType::RebootProcessAndSwitch);
+        assert_eq!(KillType::from_str("6").unwrap(), KillType::Reboot);
+        assert_eq!(KillType::from_str("7").unwrap(), KillType::RebootProcess);
+        assert_eq!(KillType::from_str("8").unwrap(), KillType::None);
+    }
+
+    // ... other tests remain unchanged ...
+
 }
