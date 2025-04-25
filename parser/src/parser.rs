@@ -26,6 +26,10 @@ pub enum Event {
     ProgramStart(ProgramStartData),
     /// Represents a DiskSwap event.
     DiskSwap(DiskSwapData),
+    /// Represents a SetDiskFailure event.
+    SetDiskFailure(SetDiskFailureData),
+    /// Represents a CorruptedBlock event.
+    CorruptedBlock(CorruptedBlockData),
     // Add other specific event variants here
 }
 
@@ -205,6 +209,61 @@ impl Into<Event> for DiskSwapData {
     }
 }
 
+/// Data specific to a SetDiskFailure event.
+#[derive(Debug, Deserialize, PartialEq, Clone, Serialize)]
+pub struct SetDiskFailureData {
+    #[serde(rename = "Time")]
+    pub timestamp: String,
+    #[serde(rename = "Machine")]
+    pub machine: String,
+    #[serde(rename = "StallInterval")]
+    pub stall_interval: String,
+    #[serde(rename = "StallPeriod")]
+    pub stall_period: String,
+    #[serde(rename = "StallUntil")]
+    pub stall_until: String,
+    #[serde(rename = "ThrottlePeriod")]
+    pub throttle_period: String,
+    #[serde(rename = "ThrottleUntil")]
+    pub throttle_until: String,
+    // Other fields ignored for now: Severity, DateTime, ID, Now, ThreadID, LogGroup, Roles
+}
+
+impl Into<Event> for SetDiskFailureData {
+    fn into(self) -> Event {
+        Event::SetDiskFailure(self)
+    }
+}
+
+/// Data specific to a CorruptedBlock event.
+#[derive(Debug, Deserialize, PartialEq, Clone, Serialize)]
+pub struct CorruptedBlockData {
+    #[serde(rename = "Severity")]
+    pub severity: String,
+    #[serde(rename = "Time")]
+    pub time: String,
+    #[serde(rename = "DateTime")]
+    pub date_time: String,
+    #[serde(rename = "Type")]
+    pub event_type: String, // Should always be "CorruptedBlock"
+    #[serde(rename = "Machine")]
+    pub machine: String,
+    #[serde(rename = "Filename")]
+    pub filename: String,
+    #[serde(rename = "Block")]
+    pub block: String, // Keep as string, might not always be numeric?
+    #[serde(rename = "ID")] // Optional, seems to be 000... in example
+    pub id: Option<String>,
+    #[serde(rename = "Roles")] // Optional
+    pub roles: Option<String>,
+}
+
+impl Into<Event> for CorruptedBlockData {
+    fn into(self) -> Event {
+        Event::CorruptedBlock(self)
+    }
+}
+
 #[repr(i64)] // Specify underlying representation
 #[derive(Debug, PartialEq, Clone, Copy, Serialize)]
 pub enum KillType {
@@ -248,6 +307,8 @@ impl Event {
             Event::CoordinatorsChange(data) => data.timestamp.parse().unwrap_or(0.0),
             Event::ProgramStart(data) => data.timestamp.parse().unwrap_or(0.0),
             Event::DiskSwap(data) => data.timestamp.parse().unwrap_or(0.0),
+            Event::SetDiskFailure(data) => data.timestamp.parse().unwrap_or(0.0),
+            Event::CorruptedBlock(data) => data.time.parse().unwrap_or(0.0),
         }
     }
 }
@@ -300,9 +361,13 @@ fn parse_event_from_node(node: &JsonNode) -> Option<Event> {
         }
         "Assassination" => try_parse_event_data::<AssassinationData>(node),
         "CoordinatorsChangeBeforeCommit" => try_parse_event_data::<CoordinatorsChangeData>(node),
-        "ProgramStart" => try_parse_event_data::<ProgramStartData>(node),
-        "SimulatedMachineFolderSwap" => try_parse_event_data::<DiskSwapData>(node),
-        _ => None, // Unknown "Type"
+        "ProgramStart" => try_parse_event_data::<ProgramStartData>(node).map(|e| e.into()),
+        "SimulatedMachineFolderSwap" => {
+            try_parse_event_data::<DiskSwapData>(node).map(|e| e.into())
+        } // Use DiskSwapData struct
+        "SetDiskFailure" => try_parse_event_data::<SetDiskFailureData>(node).map(|e| e.into()),
+        "CorruptedBlock" => try_parse_event_data::<CorruptedBlockData>(node).map(|e| e.into()),
+        _ => None, // Unknown event type
     }
 }
 
@@ -355,6 +420,7 @@ pub fn parse_log_file<P: AsRef<Path>>(file_path: P) -> Result<Vec<Event>, Parsin
 #[cfg(test)]
 mod tests {
     use super::*; // Import items from outer module
+    use serde_json::json;
     use std::path::Path;
 
     #[test]
@@ -381,10 +447,11 @@ mod tests {
 
     #[test]
     fn test_parse_assassination_event() {
-        let json_line = r#"{
-            "Severity": "30", "Time": "138.462824", "DateTime": "2025-04-24T08:56:00Z", "Type": "Assassination", "Machine": "3.4.3.1:1", "TargetMachine": null, "TargetDatacenter": "1", "Reboot": "6", "ThreadID": "123456789", "LogGroup": "default"
-        }"#;
-        let node: JsonNode = serde_json::from_str(json_line).expect("Failed to parse JSON line");
+        let json_line = json!({
+          "Severity": "30", "Time": "138.462824", "DateTime": "2025-04-24T08:56:00Z", "Type": "Assassination", "Machine": "3.4.3.1:1", "TargetMachine": null, "TargetDatacenter": "1", "Reboot": "6", "ThreadID": "123456789", "LogGroup": "default"
+        });
+        let node: JsonNode =
+            serde_json::from_str(&json_line.to_string()).expect("Failed to parse JSON line");
         let event = parse_event_from_node(&node);
 
         assert!(event.is_some(), "Event should be parsed");
@@ -402,10 +469,11 @@ mod tests {
 
     #[test]
     fn test_parse_assassination_event_datacenter() {
-        let json_line = r#"{
-            "Severity": "30", "Time": "138.462824", "DateTime": "2025-04-24T08:56:00Z", "Type": "Assassination", "Machine": "3.4.3.1:1", "TargetMachine": null, "TargetDatacenter": "dc1", "Reboot": "2", "ThreadID": "123456789", "LogGroup": "default"
-        }"#;
-        let node: JsonNode = serde_json::from_str(json_line).expect("Failed to parse JSON line");
+        let json_line = json!({
+          "Severity": "30", "Time": "138.462824", "DateTime": "2025-04-24T08:56:00Z", "Type": "Assassination", "Machine": "3.4.3.1:1", "TargetMachine": null, "TargetDatacenter": "dc1", "Reboot": "2", "ThreadID": "123456789", "LogGroup": "default"
+        });
+        let node: JsonNode =
+            serde_json::from_str(&json_line.to_string()).expect("Failed to parse JSON line");
         let event = parse_event_from_node(&node);
 
         assert!(event.is_some(), "Event should be parsed");
@@ -423,10 +491,11 @@ mod tests {
 
     #[test]
     fn test_parse_program_start_event_with_seed() {
-        let json_line = r#"{
-            "Severity": "10", "Time": "0.000000", "DateTime": "2025-04-24T08:55:36Z", "Type": "ProgramStart", "Machine": "0.0.0.0:0", "ID": "0000000000000000", "RandomSeed": "2837976339", "SourceVersion": "412531b5c97fa84343da94888cc949a4d29e8c29", "Version": "7.3.43", "PackageName": "7.3", "FileSystem": "", "DataFolder": "", "WorkingDirectory": "/root", "ClusterFile": "", "ConnectionString": "", "ActualTime": "1745484936", "EnvironmentKnobOptions": "none", "CommandLine": "fdbserver -r simulation -f /root/logical_db.toml -b on --trace-format json -L ./logs", "BuggifyEnabled": "1", "FaultInjectionEnabled": "1", "MemoryLimit": "8589934592", "VirtualMemoryLimit": "0", "ProtocolVersion": "0x0FDB00B073000000", "ThreadID": "10058538621798076542", "LogGroup": "default", "TrackLatestType": "Original"
-        }"#;
-        let node: JsonNode = serde_json::from_str(json_line).expect("Failed to parse JSON line");
+        let json_line = json!({
+          "Severity": "10", "Time": "0.000000", "DateTime": "2025-04-24T08:55:36Z", "Type": "ProgramStart", "Machine": "0.0.0.0:0", "ID": "0000000000000000", "RandomSeed": "2837976339", "SourceVersion": "412531b5c97fa84343da94888cc949a4d29e8c29", "Version": "7.3.43", "PackageName": "7.3", "FileSystem": "", "DataFolder": "", "WorkingDirectory": "/root", "ClusterFile": "", "ConnectionString": "", "ActualTime": "1745484936", "EnvironmentKnobOptions": "none", "CommandLine": "fdbserver -r simulation -f /root/logical_db.toml -b on --trace-format json -L ./logs", "BuggifyEnabled": "1", "FaultInjectionEnabled": "1", "MemoryLimit": "8589934592", "VirtualMemoryLimit": "0", "ProtocolVersion": "0x0FDB00B073000000", "ThreadID": "10058538621798076542", "LogGroup": "default", "TrackLatestType": "Original"
+        });
+        let node: JsonNode =
+            serde_json::from_str(&json_line.to_string()).expect("Failed to parse JSON line");
         let event = parse_event_from_node(&node);
 
         assert!(event.is_some(), "Event should be parsed");
@@ -442,10 +511,11 @@ mod tests {
 
     #[test]
     fn test_parse_program_start_event_without_seed() {
-        let json_line = r#"{
-            "Severity": "10", "Time": "251.750000", "OriginalTime": "59.959330", "DateTime": "2025-04-24T08:56:01Z", "OriginalDateTime": "2025-04-24T08:55:51Z", "Type": "ProgramStart", "Machine": "0.0.0.0:0", "ID": "0000000000000000", "Cycles": "2", "RandomId": "335a979b73b384c9", "SourceVersion": "412531b5c97fa84343da94888cc949a4d29e8c29", "Version": "7.3.43", "PackageName": "7.3", "DataFolder": "simfdb/6692e205b59f17fc558b5ed42d7a6bfa", "ConnectionString": "TestCluster:0@2.0.1.0:1:tls", "ActualTime": "1745484951", "CommandLine": "fdbserver -r simulation", "BuggifyEnabled": "1", "Simulated": "1", "ThreadID": "11198558628993500058", "LogGroup": "default", "TrackLatestType": "Rolled"
-        }"#;
-        let node: JsonNode = serde_json::from_str(json_line).expect("Failed to parse JSON line");
+        let json_line = json!({
+          "Severity": "10", "Time": "251.750000", "OriginalTime": "59.959330", "DateTime": "2025-04-24T08:56:01Z", "OriginalDateTime": "2025-04-24T08:55:51Z", "Type": "ProgramStart", "Machine": "0.0.0.0:0", "ID": "0000000000000000", "Cycles": "2", "RandomId": "335a979b73b384c9", "SourceVersion": "412531b5c97fa84343da94888cc949a4d29e8c29", "Version": "7.3.43", "PackageName": "7.3", "DataFolder": "simfdb/6692e205b59f17fc558b5ed42d7a6bfa", "ConnectionString": "TestCluster:0@2.0.1.0:1:tls", "ActualTime": "1745484951", "CommandLine": "fdbserver -r simulation", "BuggifyEnabled": "1", "Simulated": "1", "ThreadID": "11198558628993500058", "LogGroup": "default", "TrackLatestType": "Rolled"
+        });
+        let node: JsonNode =
+            serde_json::from_str(&json_line.to_string()).expect("Failed to parse JSON line");
         let event = parse_event_from_node(&node);
 
         assert!(event.is_some(), "Event should be parsed");
@@ -457,5 +527,73 @@ mod tests {
             }
             _ => panic!("Parsed event is not a ProgramStart event"),
         }
+    }
+
+    #[test]
+    fn test_parse_set_disk_failure_event() {
+        let json_line = json!({
+          "Severity": "10",
+          "Time": "146.900748",
+          "DateTime": "2025-04-25T09:26:05Z",
+          "Type": "SetDiskFailure",
+          "Machine": "2.1.1.0:1",
+          "ID": "0000000000000000",
+          "Now": "146.901",
+          "StallInterval": "5",
+          "StallPeriod": "5",
+          "StallUntil": "151.901",
+          "ThrottlePeriod": "30",
+          "ThrottleUntil": "176.901",
+          "ThreadID": "12256871313368394809",
+          "LogGroup": "default",
+          "Roles": "CD,LR,SS,TL"
+        });
+
+        let expected_event = Event::SetDiskFailure(SetDiskFailureData {
+            timestamp: "146.900748".to_string(),
+            machine: "2.1.1.0:1".to_string(),
+            stall_interval: "5".to_string(),
+            stall_period: "5".to_string(),
+            stall_until: "151.901".to_string(),
+            throttle_period: "30".to_string(),
+            throttle_until: "176.901".to_string(),
+        });
+
+        let parsed_event = parse_event_from_node(&json_line);
+        assert_eq!(parsed_event, Some(expected_event));
+    }
+
+    #[test]
+    fn test_parse_corrupted_block_event() {
+        let json_line = json!({
+          "Severity": "10", "Time": "93.070647", "DateTime": "2025-04-25T09:40:11Z", "Type": "CorruptedBlock", "Machine": "2.0.1.3:1", "ID": "0000000000000000", "Filename": "/path/to/storage.sqlite", "Block": "20", "ThreadID": "123", "LogGroup": "default", "Roles": "BK,CP,SS,TL"
+        });
+        let node: JsonNode =
+            serde_json::from_str(&json_line.to_string()).expect("Failed to parse JSON line");
+        let event = parse_event_from_node(&node);
+
+        assert!(event.is_some(), "Event should be parsed");
+        match event.unwrap() {
+            Event::CorruptedBlock(data) => {
+                assert_eq!(data.time, "93.070647");
+                assert_eq!(data.machine, "2.0.1.3:1");
+                assert_eq!(data.filename, "/path/to/storage.sqlite");
+                assert_eq!(data.block, "20");
+                assert_eq!(data.roles, Some("BK,CP,SS,TL".to_string()));
+            }
+            _ => panic!("Parsed event is not a CorruptedBlock event"),
+        }
+    }
+
+    #[test]
+    fn test_parse_unknown_event() {
+        let json_line = json!({
+          "Severity": "10", "Time": "93.070647", "DateTime": "2025-04-25T09:40:11Z", "Type": "UnknownEvent", "Machine": "2.0.1.3:1", "ID": "0000000000000000", "Filename": "/path/to/storage.sqlite", "Block": "20", "ThreadID": "123", "LogGroup": "default", "Roles": "BK,CP,SS,TL"
+        });
+        let node: JsonNode =
+            serde_json::from_str(&json_line.to_string()).expect("Failed to parse JSON line");
+        let event = parse_event_from_node(&node);
+
+        assert!(event.is_none(), "Event should not be parsed");
     }
 }

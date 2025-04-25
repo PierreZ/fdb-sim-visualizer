@@ -1,13 +1,13 @@
 use clap::Parser;
 use clap::ValueEnum;
+use humantime::format_duration;
 use parser::parser::{parse_log_file, ParsingError};
 use parser::report::create_simulation_report;
 use serde_json;
 use std::path::PathBuf;
 use std::process;
-use thiserror::Error;
 use std::time::Duration;
-use humantime::format_duration;
+use thiserror::Error;
 
 /// Enum defining the possible output formats for the report.
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum, Debug)]
@@ -75,15 +75,17 @@ fn run(cli: Cli) -> Result<(), CliError> {
                     let duration = Duration::from_secs_f64(secs);
                     println!("Simulated Time: {}", format_duration(duration));
                 } else {
-                     println!("Simulated Time: {} seconds (could not parse)", time_str); // Fallback
+                    println!("Simulated Time: {} seconds (could not parse)", time_str);
+                    // Fallback
                 }
             }
             if let Some(real_str) = &report.real_time {
-                 if let Ok(secs) = real_str.parse::<f64>() {
+                if let Ok(secs) = real_str.parse::<f64>() {
                     let duration = Duration::from_secs_f64(secs);
                     println!("Real Time: {}", format_duration(duration));
                 } else {
-                     println!("Real Time: {} seconds (could not parse)", real_str); // Fallback
+                    println!("Real Time: {} seconds (could not parse)", real_str);
+                    // Fallback
                 }
             }
             println!(""); // Spacer
@@ -129,49 +131,79 @@ fn run(cli: Cli) -> Result<(), CliError> {
                         roles_str // Use the formatted role counts string
                     );
                 }
-                println!(); // Blank line after summary
             }
 
-            println!("");
+            println!("\n\n--- Summaries ---");
 
-            println!("--- Summaries ---");
-            if let Some(summary) = &report.clogging_pair_summary {
+            // --- Clogging Pairs Summary --- //
+            if report.clogging_pair_summary.is_some()
+                && report.clogging_pair_summary.as_ref().unwrap().count > 0
+            {
                 println!("  Clogging Pairs:");
-                println!("    Count: {}", summary.count);
-                println!(
-                    "    Duration (sec): Min={:.6}, Mean={:.6}, Max={:.6}",
-                    summary.min_seconds, summary.mean_seconds, summary.max_seconds
-                );
-            }
-            println!("  Clogged Interfaces (by Queue):");
-            // Sort queue names for consistent output
-            let mut queues: Vec<_> = report.clog_interface_summary.keys().collect();
-            queues.sort();
-            for queue_name in queues {
-                if let Some(summary) = report.clog_interface_summary.get(queue_name) {
-                    println!("    Queue '{}':", queue_name);
-                    println!("      Count: {}", summary.count);
+                if let Some(summary) = &report.clogging_pair_summary {
+                    println!("    Count: {}", summary.count);
                     println!(
-                        "      Delay (sec): Min={:.6}, Mean={:.6}, Max={:.6}",
+                        "    Duration (sec): Min={:.6}, Mean={:.6}, Max={:.6}",
                         summary.min_seconds, summary.mean_seconds, summary.max_seconds
                     );
                 }
             }
 
-            println!("  Assassinations (by KillType):");
-            // Sort kill types for consistent output
-            let mut kill_types: Vec<_> = report.assassination_summary.keys().collect();
-            kill_types.sort();
-            for kill_type in kill_types {
-                if let Some(count) = report.assassination_summary.get(kill_type) {
-                    println!("    {}: {}", kill_type, count);
+            // --- Clogged Interfaces Summary --- //
+            if !report.clog_interface_summary.is_empty() {
+                println!("  Clogged Interfaces (by Queue):");
+                // Sort queues for consistent output
+                let mut sorted_queues: Vec<_> = report.clog_interface_summary.keys().collect();
+                sorted_queues.sort();
+                for queue_name in sorted_queues {
+                    if let Some(summary) = report.clog_interface_summary.get(queue_name) {
+                        if summary.count > 0 {
+                            // Also check count within each queue
+                            println!("    Queue '{}':", queue_name);
+                            println!("      Count: {}", summary.count);
+                            println!(
+                                "      Delay (sec): Min={:.6}, Mean={:.6}, Max={:.6}",
+                                summary.min_seconds, summary.mean_seconds, summary.max_seconds
+                            );
+                        }
+                    }
                 }
             }
 
-            println!(
-                "  Coordinator Changes: {}",
-                report.coordinators_change_count
-            );
+            // --- Assassination Summary --- //
+            if !report.assassination_summary.is_empty() {
+                println!("  Assassinations (by KillType):");
+                // Sort kill types for consistent output
+                let mut sorted_kill_types: Vec<_> = report.assassination_summary.keys().collect();
+                sorted_kill_types.sort();
+                for kill_type in sorted_kill_types {
+                    if let Some(count) = report.assassination_summary.get(kill_type) {
+                        if *count > 0 {
+                            // Check count for each type
+                            println!("    {}: {}", kill_type, count);
+                        }
+                    }
+                }
+            }
+
+            // --- Corrupted Block Summary --- //
+            if !report.corrupted_blocks.is_empty() {
+                println!("  Corrupted Blocks: {}", report.corrupted_blocks.len());
+            }
+
+            // --- Set Disk Failure Summary --- //
+            if !report.set_disk_failures.is_empty() {
+                println!("  Set Disk Failures: {}", report.set_disk_failures.len());
+            }
+
+            // --- Coordinator Changes Summary --- //
+            if report.coordinators_change_count > 0 {
+                println!(
+                    "  Coordinator Changes: {}",
+                    report.coordinators_change_count
+                );
+            }
+
             println!(""); // Spacer
         }
         OutputFormat::Json => {

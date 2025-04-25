@@ -13,12 +13,15 @@ If you are using nix, everything is already setup for you within the flake.
 cargo build --release
 ```
 
-## Generate traces
-
-Run the simulation using the provided script:
-
+ ## Generate traces
+ 
+Run the simulation script, specifying either `attrition` or `disk`:
 ```bash
-./scripts/run_simulation.sh
+# To run with Attritions.toml
+./scripts/run_simulation.sh attrition
+
+# To run with DiskFailureCycle.toml
+./scripts/run_simulation.sh disk
 ```
 
 This will generate trace logs in the `./events` directory.
@@ -29,10 +32,11 @@ This will generate trace logs in the `./events` directory.
 cargo run -- events/trace.0.0.0.0.69198.1745570893.x1jHWY.0.1.json
 ```
 
-## Example of report
+## Examples of report
+
+### Attrition
 
 ```text
-❯ cargo run -- events/trace.0.0.0.0.69198.1745570893.x1jHWY.0.1.json
 Parsing log file: events/trace.0.0.0.0.69198.1745570893.x1jHWY.0.1.json
 Parsed 1025 events.
 
@@ -63,4 +67,28 @@ Cluster topology:
   Assassinations (by KillType):
     RebootAndDelete: 6
   Coordinator Changes: 3
+```
+
+### Disk
+
+```text
+Parsing log file: events/trace.0.0.0.0.78823.1745574009.N18Xfo.0.1.json
+Parsed 225 events.
+
+FoundationDB Simulation Report
+==============================
+Seed: 3292690371
+Simulated Time: 6m 30s 439ms
+Real Time: 18s 539ms 700us
+
+Cluster topology:
+    Datacenter 0: 6 machines (sim_http_server: 1, storage_cache: 1, unset: 4)
+    Datacenter 1: 5 machines (sim_http_server: 1, unset: 4)
+    Datacenter 2: 7 machines (sim_http_server: 3, unset: 4)
+    Datacenter 3: 6 machines (sim_http_server: 2, unset: 4)
+
+
+--- Summaries ---
+  Corrupted Blocks: 158
+  Set Disk Failures: 5
 ```

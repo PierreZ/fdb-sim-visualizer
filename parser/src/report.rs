@@ -1,8 +1,8 @@
 use serde::{Deserialize, Serialize};
 
 use crate::parser::{
-    AssassinationData, ClogInterfaceData, CloggingPairData, CoordinatorsChangeData, Event, KillType,
-    DiskSwapData,
+    AssassinationData, ClogInterfaceData, CloggingPairData, CoordinatorsChangeData,
+    CorruptedBlockData, DiskSwapData, Event, KillType, SetDiskFailureData,
 };
 use std::collections::HashMap;
 use std::fmt;
@@ -66,6 +66,10 @@ pub struct SimulationReport {
     pub machine_details: HashMap<String, MachineInfo>,
     /// List of DiskSwap events, sorted by timestamp.
     pub disk_swaps: Vec<DiskSwapData>,
+    /// List of SetDiskFailure events, sorted by timestamp.
+    pub set_disk_failures: Vec<SetDiskFailureData>,
+    /// List of CorruptedBlock events, sorted by timestamp.
+    pub corrupted_blocks: Vec<CorruptedBlockData>,
 }
 
 impl fmt::Display for SimulationReport {
@@ -131,6 +135,8 @@ impl fmt::Display for SimulationReport {
             self.coordinators_change_count
         )?;
         writeln!(f, "  Disk Swaps: {}", self.disk_swaps.len())?;
+        writeln!(f, "  Disk Failures: {}", self.set_disk_failures.len())?;
+        writeln!(f, "  Corrupted Blocks: {}", self.corrupted_blocks.len())?;
         writeln!(f, "")?;
 
         // Initially, don't print the long vectors or detailed maps
@@ -164,6 +170,8 @@ pub fn create_simulation_report(events: &[Event]) -> SimulationReport {
     let mut assassinations = Vec::new();
     let mut coordinators_changes = Vec::new();
     let mut disk_swaps = Vec::new();
+    let mut set_disk_failures = Vec::new();
+    let mut corrupted_blocks = Vec::new();
 
     for event in events {
         match event {
@@ -198,6 +206,8 @@ pub fn create_simulation_report(events: &[Event]) -> SimulationReport {
             Event::Assassination(data) => assassinations.push(data.clone()),
             Event::CoordinatorsChange(data) => coordinators_changes.push(data.clone()),
             Event::DiskSwap(data) => disk_swaps.push(data.clone()),
+            Event::SetDiskFailure(data) => set_disk_failures.push(data.clone()),
+            Event::CorruptedBlock(data) => corrupted_blocks.push(data.clone()),
         }
     }
 
@@ -229,6 +239,16 @@ pub fn create_simulation_report(events: &[Event]) -> SimulationReport {
             .partial_cmp(&parse_ts(&b.timestamp))
             .unwrap_or(std::cmp::Ordering::Equal)
     });
+    set_disk_failures.sort_by(|a, b| {
+        parse_ts(&a.timestamp)
+            .partial_cmp(&parse_ts(&b.timestamp))
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    corrupted_blocks.sort_by(|a, b| {
+        parse_ts(&a.time)
+            .partial_cmp(&parse_ts(&b.time))
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
 
     // --- Calculate Clogging Summary ---
     let mut min_seconds = f64::MAX;
@@ -253,12 +273,7 @@ pub fn create_simulation_report(events: &[Event]) -> SimulationReport {
             max_seconds,
         })
     } else {
-        Some(CloggingPairSummary {
-            count: 0,
-            min_seconds: 0.0,
-            mean_seconds: 0.0,
-            max_seconds: 0.0,
-        })
+        None
     };
 
     // --- Calculate Clog Interface Summary (Grouped by Queue) ---
@@ -319,6 +334,8 @@ pub fn create_simulation_report(events: &[Event]) -> SimulationReport {
         coordinators_change_count,
         machine_details,
         disk_swaps,
+        set_disk_failures,
+        corrupted_blocks,
     }
 }
 
@@ -411,5 +428,41 @@ mod tests {
             Some(machine_id_to_check.to_string())
         );
         assert_eq!(machine_info.class_type, Some("sim_http_server".to_string()));
+    }
+
+    #[test]
+    fn test_create_report_with_set_disk_failure() {
+        // Create a sample SetDiskFailure event
+        let disk_failure_data = SetDiskFailureData {
+            timestamp: "150.0".to_string(),
+            machine: "1.2.3.4:5".to_string(),
+            stall_interval: "10".to_string(),
+            stall_period: "10".to_string(),
+            stall_until: "160.0".to_string(),
+            throttle_period: "60".to_string(),
+            throttle_until: "210.0".to_string(),
+        };
+        let events = vec![Event::SetDiskFailure(disk_failure_data.clone())];
+
+        // Create the report
+        let report = create_simulation_report(&events);
+
+        // Assertions
+        assert_eq!(report.set_disk_failures.len(), 1);
+        assert_eq!(report.set_disk_failures[0], disk_failure_data);
+        // Check other fields are default/empty as expected
+        assert!(report.seed.is_none());
+        assert!(report.elapsed_time.is_none());
+        assert!(report.clogging_pairs.is_empty());
+        assert!(report.clogging_pair_summary.is_none());
+        assert!(report.clog_interfaces.is_empty());
+        assert!(report.clog_interface_summary.is_empty());
+        assert!(report.assassinations.is_empty());
+        assert!(report.assassination_summary.is_empty());
+        assert!(report.coordinators_changes.is_empty());
+        assert_eq!(report.coordinators_change_count, 0);
+        assert!(report.machine_details.is_empty());
+        assert!(report.disk_swaps.is_empty());
+        assert!(report.corrupted_blocks.is_empty());
     }
 }
