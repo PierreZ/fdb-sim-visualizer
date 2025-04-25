@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::parser::{
     AssassinationData, ClogInterfaceData, CloggingPairData, CoordinatorsChangeData, Event, KillType,
+    DiskSwapData,
 };
 use std::collections::HashMap;
 use std::fmt;
@@ -63,6 +64,8 @@ pub struct SimulationReport {
     pub coordinators_change_count: usize,
     /// Details of machines involved in the simulation.
     pub machine_details: HashMap<String, MachineInfo>,
+    /// List of DiskSwap events, sorted by timestamp.
+    pub disk_swaps: Vec<DiskSwapData>,
 }
 
 impl fmt::Display for SimulationReport {
@@ -127,6 +130,7 @@ impl fmt::Display for SimulationReport {
             "  Coordinator Changes: {}",
             self.coordinators_change_count
         )?;
+        writeln!(f, "  Disk Swaps: {}", self.disk_swaps.len())?;
         writeln!(f, "")?;
 
         // Initially, don't print the long vectors or detailed maps
@@ -159,6 +163,7 @@ pub fn create_simulation_report(events: &[Event]) -> SimulationReport {
     let mut clog_interfaces = Vec::new();
     let mut assassinations = Vec::new();
     let mut coordinators_changes = Vec::new();
+    let mut disk_swaps = Vec::new();
 
     for event in events {
         match event {
@@ -192,6 +197,7 @@ pub fn create_simulation_report(events: &[Event]) -> SimulationReport {
             }
             Event::Assassination(data) => assassinations.push(data.clone()),
             Event::CoordinatorsChange(data) => coordinators_changes.push(data.clone()),
+            Event::DiskSwap(data) => disk_swaps.push(data.clone()),
         }
     }
 
@@ -214,6 +220,11 @@ pub fn create_simulation_report(events: &[Event]) -> SimulationReport {
             .unwrap_or(std::cmp::Ordering::Equal)
     });
     coordinators_changes.sort_by(|a, b| {
+        parse_ts(&a.timestamp)
+            .partial_cmp(&parse_ts(&b.timestamp))
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    disk_swaps.sort_by(|a, b| {
         parse_ts(&a.timestamp)
             .partial_cmp(&parse_ts(&b.timestamp))
             .unwrap_or(std::cmp::Ordering::Equal)
@@ -307,6 +318,7 @@ pub fn create_simulation_report(events: &[Event]) -> SimulationReport {
         coordinators_changes,
         coordinators_change_count,
         machine_details,
+        disk_swaps,
     }
 }
 

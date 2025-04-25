@@ -24,6 +24,8 @@ pub enum Event {
     CoordinatorsChange(CoordinatorsChangeData),
     /// Represents a ProgramStart event.
     ProgramStart(ProgramStartData),
+    /// Represents a DiskSwap event.
+    DiskSwap(DiskSwapData),
     // Add other specific event variants here
 }
 
@@ -187,6 +189,22 @@ impl Into<Event> for ProgramStartData {
     }
 }
 
+/// Data specific to a DiskSwap (SimulatedMachineFolderSwap) event.
+#[derive(Debug, Deserialize, PartialEq, Clone, Serialize)]
+pub struct DiskSwapData {
+    #[serde(rename = "Time")]
+    pub timestamp: String,
+    #[serde(rename = "MachineIPs")]
+    pub machine_ips: String, // Assuming this is a single string like "[ip1,ip2,...]"
+                             // Consider parsing this further if needed
+}
+
+impl Into<Event> for DiskSwapData {
+    fn into(self) -> Event {
+        Event::DiskSwap(self)
+    }
+}
+
 #[repr(i64)] // Specify underlying representation
 #[derive(Debug, PartialEq, Clone, Copy, Serialize)]
 pub enum KillType {
@@ -229,6 +247,7 @@ impl Event {
             Event::Assassination(data) => data.timestamp.parse().unwrap_or(0.0),
             Event::CoordinatorsChange(data) => data.timestamp.parse().unwrap_or(0.0),
             Event::ProgramStart(data) => data.timestamp.parse().unwrap_or(0.0),
+            Event::DiskSwap(data) => data.timestamp.parse().unwrap_or(0.0),
         }
     }
 }
@@ -282,6 +301,7 @@ fn parse_event_from_node(node: &JsonNode) -> Option<Event> {
         "Assassination" => try_parse_event_data::<AssassinationData>(node),
         "CoordinatorsChangeBeforeCommit" => try_parse_event_data::<CoordinatorsChangeData>(node),
         "ProgramStart" => try_parse_event_data::<ProgramStartData>(node),
+        "SimulatedMachineFolderSwap" => try_parse_event_data::<DiskSwapData>(node),
         _ => None, // Unknown "Type"
     }
 }
