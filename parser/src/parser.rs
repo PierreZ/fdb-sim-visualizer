@@ -1,7 +1,7 @@
-use regex::Regex;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonNode;
+use std::fmt;
 use std::fs::File;
 use std::io::{self, BufRead, BufReader};
 use std::path::Path;
@@ -18,8 +18,6 @@ pub enum Event {
     ElapsedTime(ElapsedTimeData),
     /// Represents a SimulatedMachineStart event.
     SimulatedMachineStart(SimulatedMachineStartData),
-    /// Represents a SimulatedMachineProcess event.
-    SimulatedMachineProcess(SimulatedMachineProcessData),
     /// Represents an Assassination event.
     Assassination(AssassinationData),
     /// Represents a CoordinatorsChange event.
@@ -93,41 +91,44 @@ impl Into<Event> for ElapsedTimeData {
 pub struct SimulatedMachineStartData {
     #[serde(rename = "Time")]
     pub timestamp: String,
-    #[serde(rename = "ID")]
-    pub id: String,
-    #[serde(rename = "MachineIPs")]
-    pub machine_ips: String, // Can be space-separated
     #[serde(rename = "ProcessClass")]
     pub process_class: String,
-    #[serde(rename = "DataHall")]
-    pub data_hall: String,
     #[serde(rename = "Locality")]
     pub locality: String, // Contains dcid, machineid, etc.
-    // These fields are extracted from Locality after deserialization
-    pub dcid: Option<String>,
-    pub machineid: Option<String>,
-    // Other fields ignored: Severity, DateTime, Machine, Folder0, CFolder0, SSL, Processes, BootCount, Restarting, UseSeedFile, ZoneId, ThreadID, LogGroup
+    // fields populated from Locality
+    pub zone_id: Option<String>,
+    pub process_id: Option<String>,
+    pub machine_id: Option<String>,
+    pub dc_id: Option<String>,
+    pub data_hall: Option<String>,
 }
 
-/// Data specific to a SimulatedMachineProcess event.
-#[derive(Debug, Deserialize, PartialEq, Clone, Serialize)]
-pub struct SimulatedMachineProcessData {
-    #[serde(rename = "Time")]
-    pub timestamp: String,
-    #[serde(rename = "ID")]
-    pub id: String,
-    #[serde(rename = "Address")]
-    pub address: String, // e.g., "2.0.1.0:1"
-    #[serde(rename = "DataHall")]
-    pub data_hall: String,
-    #[serde(rename = "ZoneId")]
-    pub zone_id: String,
-    // Other fields ignored: Severity, DateTime, Machine, Folder, ThreadID, LogGroup
+impl SimulatedMachineStartData {
+    fn populate_from_locality(&mut self) {
+        let locality_string = self.locality.split(" ");
+        for part in locality_string {
+            // split again
+            let (key, value) = part.split_once("=").unwrap();
+            let parsed_value = if value == "[unset]" {
+                None
+            } else {
+                Some(value.to_string())
+            };
+            match key {
+                "zoneid" => self.zone_id = parsed_value,
+                "processid" => self.process_id = parsed_value,
+                "machineid" => self.machine_id = parsed_value,
+                "dcid" => self.dc_id = parsed_value,
+                "data_hall" => self.data_hall = parsed_value,
+                _ => {}
+            }
+        }
+    }
 }
 
-impl Into<Event> for SimulatedMachineProcessData {
+impl Into<Event> for SimulatedMachineStartData {
     fn into(self) -> Event {
-        Event::SimulatedMachineProcess(self)
+        Event::SimulatedMachineStart(self)
     }
 }
 
@@ -142,8 +143,8 @@ pub struct AssassinationData {
     pub target_machine: Option<String>,
     #[serde(rename = "TargetDatacenter")]
     pub target_datacenter: Option<String>,
-    #[serde(rename = "KillType")]
-    pub kill_type: Option<KillType>,
+    #[serde(rename = "Reboot")]
+    pub reboot: Option<String>,
     // Other fields ignored
 }
 
@@ -187,8 +188,7 @@ impl Into<Event> for ProgramStartData {
 }
 
 #[repr(i64)] // Specify underlying representation
-#[derive(Debug, PartialEq, Clone, Copy, Deserialize, Serialize)]
-#[serde(try_from = "String")]
+#[derive(Debug, PartialEq, Clone, Copy, Serialize)]
 pub enum KillType {
     Reboot = 0,
     RebootAndDelete = 1,
@@ -200,21 +200,18 @@ pub enum KillType {
     Unknown(i64),
 }
 
-impl TryFrom<String> for KillType {
-    type Error = std::num::ParseIntError;
-
-    fn try_from(value: String) -> Result<Self, Self::Error> {
-        let num = value.parse::<i64>()?;
-        Ok(match num {
-            0 => KillType::Reboot,
-            1 => KillType::RebootAndDelete,
-            2 => KillType::KillInstantly,
-            3 => KillType::InjectFaults,
-            4 => KillType::FailDisk,
-            5 => KillType::RebootProcessAndSwitch,
-            6 => KillType::RebootProcess,
-            _ => KillType::Unknown(num),
-        })
+impl fmt::Display for KillType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            KillType::Reboot => write!(f, "Reboot"),
+            KillType::RebootAndDelete => write!(f, "RebootAndDelete"),
+            KillType::KillInstantly => write!(f, "KillInstantly"),
+            KillType::InjectFaults => write!(f, "InjectFaults"),
+            KillType::FailDisk => write!(f, "FailDisk"),
+            KillType::RebootProcessAndSwitch => write!(f, "RebootProcessAndSwitch"),
+            KillType::RebootProcess => write!(f, "RebootProcess"),
+            KillType::Unknown(val) => write!(f, "Unknown({})", val),
+        }
     }
 }
 
@@ -229,7 +226,6 @@ impl Event {
             Event::ClogInterface(data) => data.timestamp.parse().unwrap_or(0.0),
             Event::ElapsedTime(data) => data.timestamp.parse().unwrap_or(0.0),
             Event::SimulatedMachineStart(data) => data.timestamp.parse().unwrap_or(0.0),
-            Event::SimulatedMachineProcess(data) => data.timestamp.parse().unwrap_or(0.0),
             Event::Assassination(data) => data.timestamp.parse().unwrap_or(0.0),
             Event::CoordinatorsChange(data) => data.timestamp.parse().unwrap_or(0.0),
             Event::ProgramStart(data) => data.timestamp.parse().unwrap_or(0.0),
@@ -277,31 +273,17 @@ fn parse_event_from_node(node: &JsonNode) -> Option<Event> {
         "SimulatedMachineStart" => {
             match serde_json::from_value::<SimulatedMachineStartData>(node.clone()) {
                 Ok(mut data) => {
-                    // Post-process Locality field using helper function
-                    data.dcid = extract_from_locality(&data.locality, "dcid").map(String::from);
-                    data.machineid =
-                        extract_from_locality(&data.locality, "machineid").map(String::from);
+                    data.populate_from_locality();
                     Some(Event::SimulatedMachineStart(data))
                 }
                 Err(_) => None,
             }
         }
-        "SimulatedMachineProcess" => try_parse_event_data::<SimulatedMachineProcessData>(node),
         "Assassination" => try_parse_event_data::<AssassinationData>(node),
         "CoordinatorsChangeBeforeCommit" => try_parse_event_data::<CoordinatorsChangeData>(node),
         "ProgramStart" => try_parse_event_data::<ProgramStartData>(node),
         _ => None, // Unknown "Type"
     }
-}
-
-/// Helper function to extract values from Locality string using regex
-fn extract_from_locality<'a>(locality: &'a str, key: &str) -> Option<&'a str> {
-    // Build a simple regex dynamically - more robust would be pre-compiling
-    let pattern = format!(r#"\b{}=(\[[^]]*\]|[^ ]*)"#, regex::escape(key));
-    let re = Regex::new(&pattern).ok()?; // Handle regex compilation error
-    re.captures(locality)
-        .and_then(|caps| caps.get(1))
-        .map(|m| m.as_str())
 }
 
 /// Parses a FoundationDB trace log file in JSON format.
@@ -380,7 +362,7 @@ mod tests {
     #[test]
     fn test_parse_assassination_event() {
         let json_line = r#"{
-            "Severity": "30", "Time": "138.462824", "DateTime": "2025-04-24T08:56:00Z", "Type": "Assassination", "Machine": "3.4.3.1:1", "TargetMachine": null, "TargetDatacenter": "1", "KillType": "6", "ThreadID": "123456789", "LogGroup": "default"
+            "Severity": "30", "Time": "138.462824", "DateTime": "2025-04-24T08:56:00Z", "Type": "Assassination", "Machine": "3.4.3.1:1", "TargetMachine": null, "TargetDatacenter": "1", "Reboot": "6", "ThreadID": "123456789", "LogGroup": "default"
         }"#;
         let node: JsonNode = serde_json::from_str(json_line).expect("Failed to parse JSON line");
         let event = parse_event_from_node(&node);
@@ -392,7 +374,7 @@ mod tests {
                 assert_eq!(data.machine, "3.4.3.1:1");
                 assert!(data.target_machine.is_none());
                 assert_eq!(data.target_datacenter.as_deref(), Some("1"));
-                assert_eq!(data.kill_type, Some(KillType::RebootProcess));
+                assert_eq!(data.reboot.as_deref(), Some("6"));
             }
             _ => panic!("Parsed event is not an Assassination event"),
         }
@@ -401,7 +383,7 @@ mod tests {
     #[test]
     fn test_parse_assassination_event_datacenter() {
         let json_line = r#"{
-            "Severity": "30", "Time": "138.462824", "DateTime": "2025-04-24T08:56:00Z", "Type": "Assassination", "Machine": "3.4.3.1:1", "TargetMachine": null, "TargetDatacenter": "dc1", "KillType": "2", "ThreadID": "123456789", "LogGroup": "default"
+            "Severity": "30", "Time": "138.462824", "DateTime": "2025-04-24T08:56:00Z", "Type": "Assassination", "Machine": "3.4.3.1:1", "TargetMachine": null, "TargetDatacenter": "dc1", "Reboot": "2", "ThreadID": "123456789", "LogGroup": "default"
         }"#;
         let node: JsonNode = serde_json::from_str(json_line).expect("Failed to parse JSON line");
         let event = parse_event_from_node(&node);
@@ -413,7 +395,7 @@ mod tests {
                 assert_eq!(data.machine, "3.4.3.1:1");
                 assert!(data.target_machine.is_none());
                 assert_eq!(data.target_datacenter.as_deref(), Some("dc1"));
-                assert_eq!(data.kill_type, Some(KillType::KillInstantly)); // KillType 2
+                assert_eq!(data.reboot.as_deref(), Some("2"));
             }
             _ => panic!("Parsed event is not an Assassination event"),
         }

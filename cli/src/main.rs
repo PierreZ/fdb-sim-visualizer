@@ -63,12 +63,84 @@ fn run(cli: Cli) -> Result<(), CliError> {
     match cli.output_format {
         OutputFormat::Summary => {
             println!("Parsed {} events.", events.len());
-            println!("\n--- Simulation Report (Summary) ---");
-            println!("{}", report); // Use the Display impl for summary
+            println!("--- Simulation Report (Summary) ---");
+            println!("FoundationDB Simulation Report");
+            println!("==============================");
+            if let Some(seed) = &report.seed {
+                println!("Seed: {}", seed);
+            }
+            if let Some(time) = &report.elapsed_time {
+                println!("Elapsed Time: {} seconds", time);
+            }
+            println!(""); // Spacer
+
+            // --- Machine Hierarchy --- //
+            if !report.machine_details.is_empty() {
+                println!("Cluster topology:");
+
+                // Count machines per datacenter
+                use std::collections::HashMap;
+                let mut dc_counts: HashMap<String, usize> = HashMap::new();
+                for machine in report.machine_details.values() {
+                    let dc_id = machine.dc_id.as_deref().unwrap_or("N/A").to_string();
+                    *dc_counts.entry(dc_id).or_insert(0) += 1;
+                }
+
+                let mut sorted_dcs: Vec<_> = dc_counts.keys().collect();
+                sorted_dcs.sort(); // Sort by dc_id for consistent output
+                for dc_id in sorted_dcs {
+                    println!(
+                        "    Datacenter {}: {} machines", // Updated per-DC format
+                        dc_id, dc_counts[dc_id]
+                    );
+                }
+                println!(); // Blank line after summary
+            }
+
+            println!("");
+
+            println!("--- Summaries ---");
+            if let Some(summary) = &report.clogging_pair_summary {
+                println!("  Clogging Pairs:");
+                println!("    Count: {}", summary.count);
+                println!(
+                    "    Duration (sec): Min={:.6}, Mean={:.6}, Max={:.6}",
+                    summary.min_seconds, summary.mean_seconds, summary.max_seconds
+                );
+            }
+            println!("  Clogged Interfaces (by Queue):");
+            // Sort queue names for consistent output
+            let mut queues: Vec<_> = report.clog_interface_summary.keys().collect();
+            queues.sort();
+            for queue_name in queues {
+                if let Some(summary) = report.clog_interface_summary.get(queue_name) {
+                    println!("    Queue '{}':", queue_name);
+                    println!("      Count: {}", summary.count);
+                    println!(
+                        "      Delay (sec): Min={:.6}, Mean={:.6}, Max={:.6}",
+                        summary.min_seconds, summary.mean_seconds, summary.max_seconds
+                    );
+                }
+            }
+
+            println!("  Assassinations (by KillType):");
+            // Sort kill types for consistent output
+            let mut kill_types: Vec<_> = report.assassination_summary.keys().collect();
+            kill_types.sort();
+            for kill_type in kill_types {
+                if let Some(count) = report.assassination_summary.get(kill_type) {
+                    println!("    {}: {}", kill_type, count);
+                }
+            }
+
+            println!(
+                "  Coordinator Changes: {}",
+                report.coordinators_change_count
+            );
+            println!(""); // Spacer
         }
         OutputFormat::Json => {
-            println!("\n--- Simulation Report (JSON) ---");
-            // Attempt to serialize the report to JSON
+            // Print as JSON (existing logic)
             match serde_json::to_string_pretty(&report) {
                 Ok(json_report) => {
                     println!("{}", json_report);

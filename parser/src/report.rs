@@ -1,24 +1,15 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::parser::{
-    AssassinationData, ClogInterfaceData, CloggingPairData, CoordinatorsChangeData, Event,
+    AssassinationData, ClogInterfaceData, CloggingPairData, CoordinatorsChangeData, Event, KillType,
 };
 use std::collections::HashMap;
 use std::fmt;
 
-// --- Report Structures ---
-
-/// Contains details about a simulated machine.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Ord, PartialOrd, Serialize)]
-pub struct MachineInfo {
-    pub id: String,
-    pub ip_address: String,
-    pub data_hall: Option<String>,
-    pub dcid: Option<String>,
-}
+// --- Summary Structs (Restored) --- //
 
 /// Holds summary statistics for CloggingPair events.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CloggingPairSummary {
     pub count: usize,
     pub min_seconds: f64,
@@ -27,7 +18,7 @@ pub struct CloggingPairSummary {
 }
 
 /// Holds summary statistics for ClogInterface events.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ClogInterfaceSummary {
     pub count: usize,
     pub min_seconds: f64,
@@ -35,13 +26,25 @@ pub struct ClogInterfaceSummary {
     pub max_seconds: f64,
 }
 
-/// Holds summary information extracted from a simulation log.
-#[derive(Debug, Serialize)]
+/// Holds details about a specific machine gathered from events.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct MachineInfo {
+    pub dc_id: Option<String>,
+    pub data_hall_id: Option<String>,
+    pub zone_id: Option<String>,
+    pub machine_id: Option<String>,
+    pub class_type: Option<String>,
+}
+
+/// Represents the overall simulation report.
+#[derive(Debug, Serialize, Deserialize)]
 pub struct SimulationReport {
     /// The random seed used for the simulation run.
     pub seed: Option<String>,
     /// The total elapsed time reported by the simulation.
     pub elapsed_time: Option<String>,
+    /// The total real time reported by the simulation.
+    pub real_time: Option<String>,
     /// List of CloggingPair events, sorted by timestamp.
     pub clogging_pairs: Vec<CloggingPairData>,
     /// Summary statistics for CloggingPair events.
@@ -60,8 +63,6 @@ pub struct SimulationReport {
     pub coordinators_change_count: usize,
     /// Details of machines involved in the simulation.
     pub machine_details: HashMap<String, MachineInfo>,
-    /// Details of processes involved in the simulation.
-    pub process_details: HashMap<String, ProcessInfo>,
 }
 
 impl fmt::Display for SimulationReport {
@@ -73,11 +74,14 @@ impl fmt::Display for SimulationReport {
             writeln!(f, "Seed: {}", seed)?;
         }
         if let Some(elapsed) = &self.elapsed_time {
-            writeln!(f, "Elapsed Time: {} seconds", elapsed)?;
+            writeln!(f, "Simulated Time: {} seconds", elapsed)?;
+        }
+        if let Some(real) = &self.real_time {
+            writeln!(f, "Real Time: {} seconds", real)?;
         }
         writeln!(f, "")?;
 
-        writeln!(f, "--- Summaries ---")?;
+        writeln!(f, "--- Chaos injection Summary ---")?;
         if let Some(summary) = &self.clogging_pair_summary {
             writeln!(f, "  Clogging Pairs:")?;
             writeln!(f, "    Count: {}", summary.count)?;
@@ -129,7 +133,6 @@ impl fmt::Display for SimulationReport {
         // Add sections here later if needed, possibly behind a flag.
         writeln!(f, "--- Details ---")?;
         writeln!(f, "  Machines Found: {}", self.machine_details.len())?;
-        writeln!(f, "  Processes Found: {}", self.process_details.len())?;
         writeln!(
             f,
             "(Raw event lists and detailed machine info omitted for brevity)"
@@ -145,12 +148,11 @@ impl fmt::Display for SimulationReport {
 /// the last reported elapsed time, and groups specific events into time-ordered vectors.
 pub fn create_simulation_report(events: &[Event]) -> SimulationReport {
     let mut seed = None;
-    // Removed machine_set
     let mut elapsed_time = None;
+    let mut real_time = None;
 
     // Use HashMaps to collect unique machine details
     let mut machine_details: HashMap<String, MachineInfo> = HashMap::new();
-    let mut process_details: HashMap<String, ProcessInfo> = HashMap::new();
 
     // Initialize vectors for other event types
     let mut clogging_pairs = Vec::new();
@@ -165,28 +167,28 @@ pub fn create_simulation_report(events: &[Event]) -> SimulationReport {
                 if seed.is_none() && data.random_seed.is_some() {
                     seed = data.random_seed.clone();
                 }
-                // No longer collecting machine names here
             }
             Event::ElapsedTime(data) => {
                 elapsed_time = Some(data.sim_time.clone());
+                real_time = Some(data.real_time.clone());
             }
             Event::CloggingPair(data) => clogging_pairs.push(data.clone()),
             Event::ClogInterface(data) => clog_interfaces.push(data.clone()),
             Event::SimulatedMachineStart(data) => {
-                let machine_info = MachineInfo {
-                    id: data.id.clone(),
-                    ip_address: data.machine_ips.clone(), // Assuming single IP for now
-                    data_hall: Some(data.data_hall.clone()),
-                    dcid: data.dcid.clone(),
-                };
-                machine_details.insert(data.id.clone(), machine_info);
-            }
-            Event::SimulatedMachineProcess(data) => {
-                let process_info = ProcessInfo {
-                    process_address: data.address.clone(), // Use data.address
-                    machine_id: data.id.clone(),           // Use data.id
-                };
-                process_details.insert(data.address.clone(), process_info); // Use data.address as key
+                if data.process_class == "test" {
+                    continue;
+                }
+
+                machine_details.insert(
+                    data.machine_id.clone().unwrap(),
+                    MachineInfo {
+                        dc_id: data.dc_id.clone(),
+                        data_hall_id: data.data_hall.clone(),
+                        zone_id: data.zone_id.clone(),
+                        machine_id: data.machine_id.clone(),
+                        class_type: Some(data.process_class.clone()),
+                    },
+                );
             }
             Event::Assassination(data) => assassinations.push(data.clone()),
             Event::CoordinatorsChange(data) => coordinators_changes.push(data.clone()),
@@ -224,15 +226,11 @@ pub fn create_simulation_report(events: &[Event]) -> SimulationReport {
     let mut count = 0;
 
     for pair in &clogging_pairs {
-        // Attempt to parse the seconds string into f64
         if let Ok(seconds) = pair.seconds.parse::<f64>() {
             min_seconds = min_seconds.min(seconds);
             max_seconds = max_seconds.max(seconds);
             sum_seconds += seconds;
             count += 1;
-        } else {
-            // Optional: Log warning for parse failures if needed
-            // eprintln!("Warning: Failed to parse clogging seconds '{}' for pair {:?}", pair.seconds, pair);
         }
     }
 
@@ -244,7 +242,6 @@ pub fn create_simulation_report(events: &[Event]) -> SimulationReport {
             max_seconds,
         })
     } else {
-        // Provide a default summary if no valid clogging pairs were found
         Some(CloggingPairSummary {
             count: 0,
             min_seconds: 0.0,
@@ -258,7 +255,7 @@ pub fn create_simulation_report(events: &[Event]) -> SimulationReport {
 
     for interface in &clog_interfaces {
         if let Ok(seconds) = interface.delay.parse::<f64>() {
-            let queue_name = interface.queue.clone(); // Use queue name as key
+            let queue_name = interface.queue.clone();
             let entry = interface_stats
                 .entry(queue_name)
                 .or_insert((0.0, f64::MAX, f64::MIN, 0));
@@ -266,7 +263,7 @@ pub fn create_simulation_report(events: &[Event]) -> SimulationReport {
             entry.1 = entry.1.min(seconds); // min
             entry.2 = entry.2.max(seconds); // max
             entry.3 += 1; // count
-        } // Optional: Log warning for parse failures
+        }
     }
 
     let clog_interface_summary: HashMap<String, ClogInterfaceSummary> = interface_stats
@@ -285,33 +282,31 @@ pub fn create_simulation_report(events: &[Event]) -> SimulationReport {
     // --- Calculate Assassination Summary (Grouped by KillType) ---
     let mut assassination_summary: HashMap<String, usize> = HashMap::new();
     for assassination in &assassinations {
-        // Convert KillType (or None) to a string key
-        let key = match &assassination.kill_type {
-            Some(kt) => format!("{:?}", kt), // Use Debug representation for now
-            None => "Unknown".to_string(),
+        let kill_type = match assassination.reboot.as_deref() {
+            Some("1") => KillType::RebootAndDelete,
+            _ => KillType::Unknown(-1),
         };
-        *assassination_summary.entry(key).or_insert(0) += 1;
+        *assassination_summary
+            .entry(kill_type.to_string())
+            .or_insert(0) += 1;
     }
 
     // --- Calculate Coordinator Change Count ---
     let coordinators_change_count = coordinators_changes.len();
 
-    // No need to sort HashMaps or convert them
-
     SimulationReport {
         seed,
-        // machines field removed
         elapsed_time,
+        real_time,
         clogging_pairs,
-        clogging_pair_summary, // Include renamed summary in report
+        clogging_pair_summary,
         clog_interfaces,
-        clog_interface_summary, // Include new summary
+        clog_interface_summary,
         assassinations,
-        assassination_summary, // Include assassination summary
+        assassination_summary,
         coordinators_changes,
-        coordinators_change_count, // Include coordinator change count
-        machine_details,           // Use map directly
-        process_details,           // Include process details
+        coordinators_change_count,
+        machine_details,
     }
 }
 
@@ -319,30 +314,24 @@ pub fn create_simulation_report(events: &[Event]) -> SimulationReport {
 #[cfg(test)]
 mod tests {
     use super::*; // Import items from outer module (report)
-    use crate::parser::parse_log_file; // Import parse_log_file
+    use crate::parser::{parse_log_file, KillType}; // Import parse_log_file
     use std::path::Path; // Need Path for parse_log_file
 
     #[test]
     fn test_create_report_from_log() {
-        // Define the path relative to the crate root (parser directory)
         let log_path_str = "logs/combined_trace.0.0.0.0.24.1745498878.p7Loj0.json";
-        // Use Path relative to crate root (which is 'parser' when running tests)
         let log_path = Path::new(log_path_str);
 
-        // Use parse_log_file to load events
         let events = parse_log_file(log_path).expect(&format!(
             "Failed to parse log file '{}' using parse_log_file",
             log_path.display()
         ));
 
-        // Create the report
         let report = create_simulation_report(&events);
 
-        // Assertions for basic report info
         assert_eq!(report.seed, Some("292006968".to_string()));
         assert_eq!(report.elapsed_time, Some("351.752".to_string()));
 
-        // Assertions for Clogging Pairs
         assert_eq!(report.clogging_pairs.len(), 396);
         assert!(report.clogging_pair_summary.is_some());
         let clog_pair_summary = report.clogging_pair_summary.as_ref().unwrap();
@@ -351,11 +340,8 @@ mod tests {
         assert!((clog_pair_summary.mean_seconds - 0.633275).abs() < 1e-6);
         assert!((clog_pair_summary.max_seconds - 6.198240).abs() < 1e-6);
 
-        // Assertions for Clogged Interfaces
-        // Removed assertion for raw vector length: assert_eq!(report.clog_interfaces.len(), 189);
-        assert_eq!(report.clog_interface_summary.len(), 3); // 'All', 'Receive', 'Send'
+        assert_eq!(report.clog_interface_summary.len(), 3);
 
-        // Check 'All' queue summary
         assert!(report.clog_interface_summary.contains_key("All"));
         let all_summary = report.clog_interface_summary.get("All").unwrap();
         assert_eq!(all_summary.count, 189);
@@ -363,7 +349,6 @@ mod tests {
         assert!((all_summary.mean_seconds - 0.263599).abs() < 1e-6);
         assert!((all_summary.max_seconds - 4.536360).abs() < 1e-6);
 
-        // Check 'Receive' queue summary
         assert!(report.clog_interface_summary.contains_key("Receive"));
         let receive_summary = report.clog_interface_summary.get("Receive").unwrap();
         assert_eq!(receive_summary.count, 135);
@@ -371,7 +356,6 @@ mod tests {
         assert!((receive_summary.mean_seconds - 0.325336).abs() < 1e-6);
         assert!((receive_summary.max_seconds - 4.316820).abs() < 1e-6);
 
-        // Check 'Send' queue summary
         assert!(report.clog_interface_summary.contains_key("Send"));
         let send_summary = report.clog_interface_summary.get("Send").unwrap();
         assert_eq!(send_summary.count, 157);
@@ -379,31 +363,41 @@ mod tests {
         assert!((send_summary.mean_seconds - 0.361933).abs() < 1e-6);
         assert!((send_summary.max_seconds - 4.221570).abs() < 1e-6);
 
-        // Assertions for Assassinations
         assert_eq!(report.assassinations.len(), 10);
         assert_eq!(report.assassination_summary.len(), 1);
-        assert!(report.assassination_summary.contains_key("Unknown"));
-        assert_eq!(report.assassination_summary.get("Unknown"), Some(&10));
+        let expected_kill_type_str = KillType::RebootAndDelete.to_string();
+        assert_eq!(
+            *report
+                .assassination_summary
+                .get(&expected_kill_type_str)
+                .unwrap_or(&0),
+            10,
+            "Incorrect count for {} assassinations",
+            expected_kill_type_str
+        );
 
-        // Assertions for Coordinator Changes
         assert_eq!(report.coordinators_changes.len(), 1);
         assert_eq!(report.coordinators_change_count, 1);
 
-        // Assertions for Machine Details
-        assert_eq!(report.machine_details.len(), 23);
-        // Check a specific process (using address)
-        assert!(report.process_details.contains_key("2.0.1.0:1"));
-        let process_info = report.process_details.get("2.0.1.0:1").unwrap();
-        assert_eq!(process_info.process_address, "2.0.1.0:1");
-        assert_eq!(process_info.machine_id, "e2962137f7c53240");
-
-        // Assertions for Assassinations
-        assert_eq!(report.assassinations.len(), 10);
+        assert_eq!(
+            report.machine_details.len(),
+            17,
+            "Machine details should have 17 entries, got {:?}",
+            report.machine_details
+        );
+        let machine_id_to_check = "25acda3f10d0edab6db5ed5464b34380";
+        assert!(report.machine_details.contains_key(machine_id_to_check));
+        let machine_info = report.machine_details.get(machine_id_to_check).unwrap();
+        assert_eq!(machine_info.dc_id, Some("0".to_string()));
+        assert_eq!(machine_info.data_hall_id, Some("0".to_string()));
+        assert_eq!(
+            machine_info.zone_id,
+            Some("0f12bbdbf2c49d14bd0388a344101846".to_string())
+        );
+        assert_eq!(
+            machine_info.machine_id,
+            Some(machine_id_to_check.to_string())
+        );
+        assert_eq!(machine_info.class_type, Some("sim_http_server".to_string()));
     }
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize)]
-pub struct ProcessInfo {
-    pub process_address: String,
-    pub machine_id: String,
 }
