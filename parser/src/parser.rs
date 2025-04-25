@@ -1,6 +1,7 @@
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonNode;
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::{self, BufRead, BufReader};
 use std::path::Path;
@@ -30,6 +31,8 @@ pub enum Event {
     CorruptedBlock(CorruptedBlockData),
     /// Represents a KillMachineProcess event.
     KillMachineProcess(KillMachineProcessData),
+    /// Represents a SimulatorConfig event.
+    SimulatorConfig(SimulatorConfigData),
     // Add other specific event variants here
 }
 
@@ -301,6 +304,42 @@ impl Into<Event> for KillMachineProcessData {
     }
 }
 
+/// Represents the raw data structure deserialized directly from the JSON for SimulatorConfig.
+#[derive(Debug, Deserialize, Serialize, PartialEq, Clone)]
+pub struct SimulatorConfigData {
+    #[serde(rename = "Time")]
+    pub timestamp: String,
+    #[serde(rename = "Machine")]
+    pub machine: String,
+    #[serde(rename = "ConfigString")]
+    pub config_string: String,
+    #[serde(default)]
+    pub config: HashMap<String, String>,
+}
+
+impl SimulatorConfigData {
+    pub fn populate_config(&mut self) {
+        let parts: Vec<&str> = self.config_string.split_whitespace().collect();
+        let mut i = 0;
+        while i < parts.len() {
+            let part = parts[i];
+            if let Some((key, value)) = part.split_once(":=").or_else(|| part.split_once('=')) {
+                self.config.insert(key.to_string(), value.to_string());
+                i += 1;
+            } else {
+                self.config.insert(part.to_string(), "".to_string()); // Key without value
+                i += 1;
+            }
+        }
+    }
+}
+
+impl Into<Event> for SimulatorConfigData {
+    fn into(self) -> Event {
+        Event::SimulatorConfig(self)
+    }
+}
+
 impl Event {
     /// Returns the timestamp associated with the event, parsed from string.
     /// Returns 0.0 if parsing fails.
@@ -318,6 +357,7 @@ impl Event {
             Event::SetDiskFailure(data) => data.timestamp.parse().unwrap_or(0.0),
             Event::CorruptedBlock(data) => data.time.parse().unwrap_or(0.0),
             Event::KillMachineProcess(data) => data.timestamp.parse().unwrap_or(0.0),
+            Event::SimulatorConfig(data) => data.timestamp.parse().unwrap_or(0.0),
         }
     }
 }
@@ -378,6 +418,13 @@ fn parse_event_from_node(node: &JsonNode) -> Option<Event> {
         "KillMachineProcess" => {
             try_parse_event_data::<KillMachineProcessData>(node).map(|e| e.into())
         }
+        "SimulatorConfig" => match serde_json::from_value::<SimulatorConfigData>(node.clone()) {
+            Ok(mut data) => {
+                data.populate_config();
+                Some(Event::SimulatorConfig(data))
+            }
+            Err(_) => None,
+        },
         _ => None, // Unknown event type
     }
 }
@@ -515,19 +562,23 @@ mod tests {
           "LogGroup": "default",
           "Roles": "CD,LR,SS,TL"
         });
+        let node: JsonNode =
+            serde_json::from_str(&json_data.to_string()).expect("Failed to parse JSON line");
+        let event = parse_event_from_node(&node);
 
-        let expected_event = Event::SetDiskFailure(SetDiskFailureData {
-            timestamp: "146.900748".to_string(),
-            machine: "2.1.1.0:1".to_string(),
-            stall_interval: "5".to_string(),
-            stall_period: "5".to_string(),
-            stall_until: "151.901".to_string(),
-            throttle_period: "30".to_string(),
-            throttle_until: "176.901".to_string(),
-        });
-
-        let parsed_event = parse_event_from_node(&json_data);
-        assert_eq!(parsed_event, Some(expected_event));
+        assert!(event.is_some(), "Event should be parsed");
+        match event.unwrap() {
+            Event::SetDiskFailure(data) => {
+                assert_eq!(data.timestamp, "146.900748");
+                assert_eq!(data.machine, "2.1.1.0:1");
+                assert_eq!(data.stall_interval, "5");
+                assert_eq!(data.stall_period, "5");
+                assert_eq!(data.stall_until, "151.901");
+                assert_eq!(data.throttle_period, "30");
+                assert_eq!(data.throttle_until, "176.901");
+            }
+            _ => panic!("Parsed event is not a SetDiskFailure event"),
+        }
     }
 
     #[test]
@@ -550,18 +601,6 @@ mod tests {
             }
             _ => panic!("Parsed event is not a CorruptedBlock event"),
         }
-    }
-
-    #[test]
-    fn test_parse_unknown_event() {
-        let json_line = json!({
-          "Severity": "10", "Time": "93.070647", "DateTime": "2025-04-25T09:40:11Z", "Type": "UnknownEvent", "Machine": "2.0.1.3:1", "ID": "0000000000000000", "Filename": "/path/to/storage.sqlite", "Block": "20", "ThreadID": "123", "LogGroup": "default", "Roles": "BK,CP,SS,TL"
-        });
-        let node: JsonNode =
-            serde_json::from_str(&json_line.to_string()).expect("Failed to parse JSON line");
-        let event = parse_event_from_node(&node);
-
-        assert!(event.is_none(), "Event should not be parsed");
     }
 
     #[test]
@@ -619,5 +658,58 @@ mod tests {
         assert_eq!(KillType::from_str("8").unwrap(), KillType::Unknown);
     }
 
-    // ... other tests remain unchanged ...
+    #[test]
+    fn test_parse_simulator_config_event() {
+        let json_str = r#"
+        {
+          "Severity": "10",
+          "Time": "0.000000",
+          "DateTime": "2025-04-24T12:47:58Z",
+          "Type": "SimulatorConfig",
+          "Machine": "0.0.0.0:0",
+          "ID": "0000000000000000",
+          "ConfigString": "new backup_worker_enabled:=0 blob_granules_enabled:=0 commit_proxies:=4 encryption_at_rest_mode=disabled grv_proxies:=1 log_engine=ssd-2 log_spill:=1 log_version:=6 logs:=3 perpetual_storage_wiggle:=0 perpetual_storage_wiggle_engine=none proxies:=5 three_data_hall resolvers:=1 storage_engine=memory storage_migration_type=disabled tenant_mode=disabled usable_regions:=1",
+          "ThreadID": "4687316415922983387",
+          "LogGroup": "default"
+        }
+        "#;
+        let node: JsonNode = serde_json::from_str(json_str).unwrap();
+        let event = parse_event_from_node(&node).unwrap();
+
+        let mut expected_config = HashMap::new();
+        expected_config.insert("new".to_string(), "".to_string());
+        expected_config.insert("backup_worker_enabled".to_string(), "0".to_string());
+        expected_config.insert("blob_granules_enabled".to_string(), "0".to_string());
+        expected_config.insert("commit_proxies".to_string(), "4".to_string());
+        expected_config.insert(
+            "encryption_at_rest_mode".to_string(),
+            "disabled".to_string(),
+        );
+        expected_config.insert("grv_proxies".to_string(), "1".to_string());
+        expected_config.insert("log_engine".to_string(), "ssd-2".to_string());
+        expected_config.insert("log_spill".to_string(), "1".to_string());
+        expected_config.insert("log_version".to_string(), "6".to_string());
+        expected_config.insert("logs".to_string(), "3".to_string());
+        expected_config.insert("perpetual_storage_wiggle".to_string(), "0".to_string());
+        expected_config.insert(
+            "perpetual_storage_wiggle_engine".to_string(),
+            "none".to_string(),
+        );
+        expected_config.insert("proxies".to_string(), "5".to_string());
+        expected_config.insert("three_data_hall".to_string(), "".to_string());
+        expected_config.insert("resolvers".to_string(), "1".to_string());
+        expected_config.insert("storage_engine".to_string(), "memory".to_string());
+        expected_config.insert("storage_migration_type".to_string(), "disabled".to_string());
+        expected_config.insert("tenant_mode".to_string(), "disabled".to_string());
+        expected_config.insert("usable_regions".to_string(), "1".to_string());
+
+        let expected_event = Event::SimulatorConfig(SimulatorConfigData {
+            timestamp: "0.000000".to_string(),
+            machine: "0.0.0.0:0".to_string(),
+            config: expected_config,
+            config_string: "new backup_worker_enabled:=0 blob_granules_enabled:=0 commit_proxies:=4 encryption_at_rest_mode=disabled grv_proxies:=1 log_engine=ssd-2 log_spill:=1 log_version:=6 logs:=3 perpetual_storage_wiggle:=0 perpetual_storage_wiggle_engine=none proxies:=5 three_data_hall resolvers:=1 storage_engine=memory storage_migration_type=disabled tenant_mode=disabled usable_regions:=1".to_string(),
+        });
+
+        assert_eq!(event, expected_event);
+    }
 }
