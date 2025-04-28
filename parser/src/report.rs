@@ -33,6 +33,7 @@ pub struct MachineInfo {
     pub data_hall_id: Option<String>,
     pub zone_id: Option<String>,
     pub machine_id: Option<String>,
+    pub ip_address: Option<String>,
     pub class_type: Option<String>,
 }
 
@@ -251,6 +252,41 @@ impl fmt::Display for SimulationReport {
 
             writeln!(f, "{}", topology_table)?;
             writeln!(f)?; // Add extra newline for spacing
+
+            // --- Machine Details Table ---
+            writeln!(f, "{}", "--- Machine Details --- ".bright_blue())?;
+            let mut machine_table = Table::new();
+            machine_table
+                .load_preset(UTF8_FULL)
+                .set_content_arrangement(ContentArrangement::Dynamic)
+                .set_header(vec![
+                    Cell::new("Machine ID"),
+                    Cell::new("IP Address"),
+                    Cell::new("DC ID"),
+                    Cell::new("Class Type"),
+                ]);
+
+            // Collect machine details into a Vec to sort them
+            let mut sorted_machines: Vec<_> = self.machine_details.values().collect();
+            // Sort by Machine ID (unwrap_or handles None cases for sorting)
+            sorted_machines.sort_by(|a, b| {
+                a.machine_id
+                    .as_deref()
+                    .unwrap_or("")
+                    .cmp(b.machine_id.as_deref().unwrap_or(""))
+            });
+
+            for machine_info in sorted_machines {
+                machine_table.add_row(vec![
+                    Cell::new(machine_info.machine_id.as_deref().unwrap_or("N/A")),
+                    Cell::new(machine_info.ip_address.as_deref().unwrap_or("N/A")),
+                    Cell::new(machine_info.dc_id.as_deref().unwrap_or("N/A")),
+                    Cell::new(machine_info.class_type.as_deref().unwrap_or("N/A")),
+                ]);
+            }
+
+            writeln!(f, "{}", machine_table)?;
+            writeln!(f)?; // Add extra newline for spacing
         }
 
         // --- Chaos Summary Section ---
@@ -423,16 +459,26 @@ pub fn create_simulation_report(events: &[Event]) -> SimulationReport {
                     continue;
                 }
 
-                machine_details.insert(
-                    data.machine_id.clone().unwrap(),
-                    MachineInfo {
-                        dc_id: data.dc_id.clone(),
-                        data_hall_id: data.data_hall.clone(),
-                        zone_id: data.zone_id.clone(),
-                        machine_id: data.machine_id.clone(),
-                        class_type: Some(data.process_class.clone()),
-                    },
-                );
+                // Ensure machine_id exists before inserting
+                if let Some(machine_id) = &data.machine_id {
+                    machine_details.insert(
+                        machine_id.clone(), // Use the actual machine_id
+                        MachineInfo {
+                            dc_id: data.dc_id.clone(),
+                            data_hall_id: data.data_hall.clone(),
+                            zone_id: data.zone_id.clone(),
+                            machine_id: data.machine_id.clone(), // Store the machine_id itself
+                            ip_address: data.machine_ips.clone(), // Use the machine_ips field here
+                            class_type: Some(data.process_class.clone()),
+                        },
+                    );
+                } else {
+                    // Optionally log a warning if machine_id is missing
+                    eprintln!(
+                        "Warning: SimulatedMachineStart event at timestamp {} is missing machine_id",
+                        data.timestamp
+                    );
+                }
             }
             Event::CoordinatorsChange(data) => coordinators_changes.push(data.clone()),
             Event::DiskSwap(data) => disk_swaps.push(data.clone()),
@@ -643,6 +689,26 @@ mod tests {
             !report.machine_details.is_empty(),
             "Machine details should not be empty"
         );
+
+        // Check specific machine IP address
+        let expected_machine_id = "e4a5cec0b954157cc11edea9e5e3ee80";
+        let expected_ip = "2.0.1.1";
+        match report.machine_details.get(expected_machine_id) {
+            Some(machine_info) => {
+                assert_eq!(
+                    machine_info.ip_address,
+                    Some(expected_ip.to_string()),
+                    "IP address mismatch for machine {}",
+                    expected_machine_id
+                );
+            }
+            None => {
+                panic!(
+                    "Machine details missing entry for machine {}",
+                    expected_machine_id
+                );
+            }
+        }
 
         // Print the report (optional, for manual inspection)
         // println!("--- Generated Report ---\n{}", report);

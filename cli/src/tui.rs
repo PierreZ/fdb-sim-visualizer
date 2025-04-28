@@ -91,37 +91,59 @@ impl App {
             .constraints([Constraint::Percentage(50), Constraint::Percentage(50)]) // Left | Right
             .split(outer_layout[0]);
 
-        // Split the Left column vertically into three parts
+        // --- Left Column Layout ---
         let left_column_layout = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Percentage(20), // Top: Overview
-                Constraint::Length(8),      // Middle: Config Summary (fixed height like before)
+                Constraint::Percentage(35), // Top: Combined Overview & Config
                 Constraint::Min(10),        // Bottom: Chaos Summary
             ])
             .split(main_columns[0]);
 
-        // Split the Right column vertically into two parts
+        let top_left_area = left_column_layout[0];
+        let overview_config_split = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([
+                Constraint::Percentage(50), // Left side: Overview
+                Constraint::Percentage(50), // Right side: Config Summary
+            ])
+            .split(top_left_area);
+        let overview_area = overview_config_split[0];
+        let config_summary_area = overview_config_split[1];
+        let chaos_area = left_column_layout[1];
+
+        // --- Right Column Layout ---
         let right_column_layout = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)]) // Top: Machine Distribution | Bottom: Timeline
+            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)]) // Top Area | Bottom: Timeline
             .split(main_columns[1]);
 
-        // Assign areas
-        let overview_area = left_column_layout[0];
-        let config_summary_area = left_column_layout[1];
-        let chaos_area = left_column_layout[2];
-        let machine_distribution_area = right_column_layout[0];
+        // Split the top-right area vertically for Machine Summary and Process Table
+        let top_right_area = right_column_layout[0];
+        let distribution_split = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(5), // Fixed height for Machine Summary (adjust as needed)
+                Constraint::Min(10),   // Remaining space for Process Table
+            ])
+            .split(top_right_area);
+
+        // Assign final areas
+        let machine_summary_area = distribution_split[0];
+        let process_detail_area = distribution_split[1];
         let timeline_area = right_column_layout[1];
 
-        // Render each pane in its designated area
+        // --- Render Panes ---
         self.render_overview_pane(frame, overview_area);
         self.render_config_summary_pane(frame, config_summary_area);
         self.render_chaos_summary_pane(frame, chaos_area);
-        self.render_topology_pane(frame, machine_distribution_area); // Renamed 'render_topology_pane' now handles Machine Distribution
+
+        // Render the new distribution panes
+        self.render_distribution_panes(frame, machine_summary_area, process_detail_area);
+
         self.render_timeline_pane(frame, timeline_area);
 
-        // Render Status Bar at the bottom
+        // Render Status Bar
         self.render_status_bar(frame, outer_layout[1]);
     }
 
@@ -179,17 +201,83 @@ impl App {
         frame.render_widget(overview_list, inner_area); // Render list inside the block
     }
 
-    /// Renders the content for the "Topology" pane.
-    fn render_topology_pane(&self, frame: &mut Frame, area: Rect) {
-        let topology_block = Block::default()
+    /// Renders the content for the "Config Summary" pane.
+    fn render_config_summary_pane(&self, frame: &mut Frame, area: Rect) {
+        let config_block = Block::default()
             .title(Span::styled(
-                " Process Distribution ",
+                " Config Summary ",
                 Style::default().fg(Color::Green),
             ))
             .borders(Borders::ALL);
 
-        // 1. Filter out sim_http_server and collect machine details
-        let mut machine_list: Vec<(String, String, String, String)> = Vec::new();
+        let mut config_items: Vec<Line> = Vec::new();
+
+        if let Some(config) = &self.report.simulator_config {
+            // Determine Replication Mode
+            let replication_mode = config
+                .get("replication")
+                .map(|s| s.as_str())
+                .or_else(
+                    || match config.get("logs").and_then(|s| s.parse::<i32>().ok()) {
+                        Some(1) => Some("single"),
+                        Some(3) => Some("double"),
+                        Some(5) => Some("triple"),
+                        _ => None, // Could be other values or not present
+                    },
+                )
+                .unwrap_or("unknown"); // Default if neither key helps
+
+            config_items.push(Line::from(format!("Replication: {}", replication_mode)));
+
+            // Display other key config values
+            let keys_to_show = [
+                "storage_engine",
+                "commit_proxies",
+                "logs",
+                "proxies",
+                "resolvers",
+            ];
+            for key in keys_to_show {
+                let value = config.get(key).map(|s| s.as_str()).unwrap_or("N/A");
+                // Capitalize first letter for display
+                let display_key = key
+                    .split('_')
+                    .map(|word| {
+                        let mut c = word.chars();
+                        match c.next() {
+                            None => String::new(),
+                            Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
+                        }
+                    })
+                    .collect::<Vec<String>>()
+                    .join(" ");
+
+                config_items.push(Line::from(format!("{}: {}", display_key, value)));
+            }
+        } else {
+            config_items.push(Line::from("Simulator config not found."));
+        }
+
+        // Add padding/empty line at the end if desired
+        // config_items.push(Line::from("")); // Makes it look less cramped
+
+        let config_paragraph = Paragraph::new(config_items)
+            .block(config_block)
+            .style(Style::default().fg(Color::White));
+
+        frame.render_widget(config_paragraph, area);
+    }
+
+    /// Renders the Machine Distribution summary and Process Distribution table.
+    fn render_distribution_panes(
+        &self,
+        frame: &mut Frame,
+        summary_area: Rect, // Area for the DC summary
+        table_area: Rect,   // Area for the detailed process table
+    ) {
+        // --- Data Collection and Processing (Same as before) ---
+        let mut machine_list: Vec<(String, String, String, String, String)> = Vec::new();
+        let mut dc_counts: HashMap<String, usize> = HashMap::new();
 
         for machine in self.report.machine_details.values() {
             let class_type = machine
@@ -197,69 +285,110 @@ impl App {
                 .clone()
                 .unwrap_or_else(|| "unset".to_string());
 
-            // Skip sim_http_server entirely
             if class_type == "sim_http_server" {
                 continue;
             }
 
-            let dc = machine
-                .dc_id
-                .clone()
-                .unwrap_or_else(|| "Unknown".to_string());
+            let dc_id = machine.dc_id.clone().unwrap_or_else(|| "N/A".to_string());
             let machine_id = machine
-                .data_hall_id
+                .machine_id
                 .clone()
-                .unwrap_or_else(|| "N/A".to_string()); // Use data_hall_id
-            let process_id = machine.zone_id.clone().unwrap_or_else(|| "N/A".to_string()); // Use zone_id
+                .unwrap_or_else(|| "N/A".to_string());
+            let ip_address = machine
+                .ip_address
+                .clone()
+                .unwrap_or_else(|| "N/A".to_string());
+            let process_id = machine
+                .machine_id
+                .clone()
+                .unwrap_or_else(|| "N/A".to_string())
+                .split(&['-', '.'])
+                .last()
+                .unwrap_or("N/A")
+                .to_string();
 
-            machine_list.push((dc, machine_id, process_id, class_type));
+            *dc_counts.entry(dc_id.clone()).or_insert(0) += 1;
+            machine_list.push((dc_id, machine_id, ip_address, process_id, class_type));
         }
 
-        // 2. Prepare data for the table, sorted
-        // Sort by DC, MachineID, ProcessID, then Class Type
-        machine_list.sort();
+        machine_list.sort_by(|a, b| {
+            let dc_cmp = a.0.cmp(&b.0);
+            if dc_cmp == std::cmp::Ordering::Equal {
+                a.1.cmp(&b.1)
+            } else {
+                dc_cmp
+            }
+        });
 
-        // 3. Define Header
-        let header_cells = [
-            Cell::from("DC").style(Style::default().fg(Color::Yellow)),
-            Cell::from("Machine ID").style(Style::default().fg(Color::Yellow)), // Renamed from Rack
-            Cell::from("Process ID").style(Style::default().fg(Color::Yellow)), // Renamed from ServerID
-            Cell::from("Class Type").style(Style::default().fg(Color::Yellow)),
-        ];
-        let header = Row::new(header_cells).height(1).bottom_margin(1);
+        // --- Render Machine Distribution Summary ---
+        let summary_block = Block::default()
+            .title(Span::styled(
+                " Machine Distribution ",
+                Style::default().fg(Color::Green),
+            ))
+            .borders(Borders::ALL);
+        let summary_inner_area = summary_block.inner(summary_area);
+        frame.render_widget(summary_block, summary_area);
 
-        // 4. Create Rows
+        let mut sorted_dcs: Vec<_> = dc_counts.into_iter().collect();
+        sorted_dcs.sort_by(|a, b| a.0.cmp(&b.0));
+        let summary_lines: Vec<Line> = sorted_dcs
+            .iter()
+            .map(|(dc, count)| {
+                Line::from(vec![
+                    Span::styled(format!("DC {}: ", dc), Style::default().fg(Color::Cyan)),
+                    Span::raw(format!("{} machines", count)), // Changed "processes" to "machines"
+                ])
+            })
+            .collect();
+        let summary_paragraph = Paragraph::new(summary_lines).wrap(Wrap { trim: true });
+        frame.render_widget(summary_paragraph, summary_inner_area);
+
+        // --- Render Process Distribution Table ---
+        let table_block = Block::default()
+            .title(Span::styled(
+                " Process Distribution ",
+                Style::default().fg(Color::Green),
+            ))
+            .borders(Borders::ALL);
+        let table_inner_area = table_block.inner(table_area);
+        frame.render_widget(table_block, table_area);
+
         let rows: Vec<Row> = machine_list
             .into_iter()
-            .map(|(dc, machine_id, process_id, class_type)| {
-                let cells = [
+            .map(|(dc, machine_id, ip_addr, process_id, class)| {
+                Row::new(vec![
                     Cell::from(dc),
                     Cell::from(machine_id),
+                    Cell::from(ip_addr),
                     Cell::from(process_id),
-                    Cell::from(Span::styled(
-                        class_type,
-                        Style::default().fg(Color::Magenta),
-                    )),
-                ];
-                Row::new(cells).height(1)
+                    Cell::from(class),
+                ])
             })
             .collect();
 
-        // 5. Define Column Widths
-        let widths = [
-            Constraint::Length(8),  // DC
-            Constraint::Length(12), // Machine ID
-            Constraint::Length(12), // Process ID
-            Constraint::Max(25),    // Class Type (flexible)
-        ];
+        let headers = ["DC", "Machine ID", "IP Address", "Process ID", "Class Type"]
+            .iter()
+            .map(|h| Cell::from(*h).style(Style::default().fg(Color::Yellow)))
+            .collect::<Row>()
+            .height(1)
+            .bottom_margin(1);
 
-        // 6. Create and Render Table
-        let machine_table = Table::new(rows, widths)
-            .header(header)
-            .block(topology_block)
-            .style(Style::default().fg(Color::White));
+        let table = Table::new(
+            rows,
+            [
+                Constraint::Length(8),
+                Constraint::Length(14),
+                Constraint::Length(15),
+                Constraint::Length(12),
+                Constraint::Min(10),
+            ],
+        )
+        .header(headers)
+        .highlight_style(Style::default().add_modifier(Modifier::REVERSED))
+        .highlight_symbol("> ");
 
-        frame.render_widget(machine_table, area);
+        frame.render_widget(table, table_inner_area);
     }
 
     /// Renders the content for the "Chaos Summary" pane.
@@ -469,73 +598,6 @@ impl App {
             .style(Style::default().fg(Color::White));
 
         frame.render_widget(timeline_table, area);
-    }
-
-    /// Renders the content for the "Config Summary" sub-pane within Topology.
-    fn render_config_summary_pane(&self, frame: &mut Frame, area: Rect) {
-        let config_block = Block::default()
-            .title(Span::styled(
-                " Config Summary ",
-                Style::default().fg(Color::Green),
-            ))
-            .borders(Borders::ALL);
-
-        let mut config_items: Vec<Line> = Vec::new();
-
-        if let Some(config) = &self.report.simulator_config {
-            // Determine Replication Mode
-            let replication_mode = config
-                .get("replication")
-                .map(|s| s.as_str())
-                .or_else(
-                    || match config.get("logs").and_then(|s| s.parse::<i32>().ok()) {
-                        Some(1) => Some("single"),
-                        Some(3) => Some("double"),
-                        Some(5) => Some("triple"),
-                        _ => None, // Could be other values or not present
-                    },
-                )
-                .unwrap_or("unknown"); // Default if neither key helps
-
-            config_items.push(Line::from(format!("Replication: {}", replication_mode)));
-
-            // Display other key config values
-            let keys_to_show = [
-                "storage_engine",
-                "commit_proxies",
-                "logs",
-                "proxies",
-                "resolvers",
-            ];
-            for key in keys_to_show {
-                let value = config.get(key).map(|s| s.as_str()).unwrap_or("N/A");
-                // Capitalize first letter for display
-                let display_key = key
-                    .split('_')
-                    .map(|word| {
-                        let mut c = word.chars();
-                        match c.next() {
-                            None => String::new(),
-                            Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
-                        }
-                    })
-                    .collect::<Vec<String>>()
-                    .join(" ");
-
-                config_items.push(Line::from(format!("{}: {}", display_key, value)));
-            }
-        } else {
-            config_items.push(Line::from("Simulator config not found."));
-        }
-
-        // Add padding/empty line at the end if desired
-        // config_items.push(Line::from("")); // Makes it look less cramped
-
-        let config_paragraph = Paragraph::new(config_items)
-            .block(config_block)
-            .style(Style::default().fg(Color::White));
-
-        frame.render_widget(config_paragraph, area);
     }
 
     /// Renders a simple status bar at the bottom.

@@ -30,8 +30,6 @@ struct Cli {
 enum CliError {
     #[error("Failed to parse log file: {0}")]
     ParsingError(#[from] parser::parser::ParsingError),
-    #[error("Failed to create simulation report: {0}")] // Placeholder for potential report errors
-    ReportError(String), // Replace String with a specific error type if needed
 }
 
 // Declare the tui module

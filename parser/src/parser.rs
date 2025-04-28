@@ -104,6 +104,8 @@ pub struct SimulatedMachineStartData {
     pub process_class: String,
     #[serde(rename = "Locality")]
     pub locality: String, // Contains dcid, machineid, etc.
+    #[serde(rename = "MachineIPs")]
+    pub machine_ips: Option<String>,
     // fields populated from Locality
     pub zone_id: Option<String>,
     pub process_id: Option<String>,
