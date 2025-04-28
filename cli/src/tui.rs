@@ -217,14 +217,6 @@ impl App {
             let replication_mode = config
                 .get("replication")
                 .map(|s| s.as_str())
-                .or_else(
-                    || match config.get("logs").and_then(|s| s.parse::<i32>().ok()) {
-                        Some(1) => Some("single"),
-                        Some(3) => Some("double"),
-                        Some(5) => Some("triple"),
-                        _ => None, // Could be other values or not present
-                    },
-                )
                 .unwrap_or("unknown"); // Default if neither key helps
 
             config_items.push(Line::from(format!("Replication: {}", replication_mode)));
@@ -548,15 +540,33 @@ impl App {
             // Parse KillType
             let kill_type = KillType::from_str(&event.raw_kill_type).unwrap_or(KillType::Unknown);
 
-            // Extract IP address (best effort based on observed format)
+            // Extract IP address, handling both IPv4 and IPv6 ([...]:port) and extra info
             let ip_addr = event
-                .process
+                .process // e.g., "... address: 2.1.1.2:1 zone: id ..." or "... address: [::1]:80 zone: id ..."
                 .split("address: ")
                 .nth(1)
-                .and_then(|addr_part| addr_part.split(':').next())
+                .map(|addr_part| {
+                    // Isolate the ip:port part before the first space (if any)
+                    let ip_with_port = addr_part.split(' ').next().unwrap_or(addr_part);
+
+                    if ip_with_port.starts_with('[') && ip_with_port.contains(']') {
+                        // Likely IPv6: Extract content within brackets
+                        ip_with_port
+                            .split('[')
+                            .nth(1)
+                            .and_then(|s| s.split(']').next())
+                            .unwrap_or(ip_with_port) // Fallback
+                    } else {
+                        // Likely IPv4: Split by last colon to remove port
+                        ip_with_port
+                            .rsplit_once(':')
+                            .map_or(ip_with_port, |(ip, _port)| ip)
+                    }
+                })
                 .unwrap_or("?.?.?.?"); // Default if parsing fails
 
-            let details = format!("Killed (Type: {:?}, IP: {})", kill_type, ip_addr);
+            // Simplify details format
+            let details = format!("{:?} {}", kill_type, ip_addr);
             add_event(&event.timestamp, "Reboot".to_string(), details);
         }
 
