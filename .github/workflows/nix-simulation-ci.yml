@@ -42,4 +42,4 @@ jobs:
           exit 1
         fi
         echo "Found trace file: $TRACE_FILE"
-        nix develop --command cargo run -- "$TRACE_FILE"
+        nix develop --command cargo run -- --log-file "$TRACE_FILE" --output-format summary

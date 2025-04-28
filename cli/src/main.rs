@@ -12,6 +12,8 @@ enum OutputFormat {
     Summary,
     /// Full report in JSON format
     Json,
+    /// Display the report in an interactive TUI.
+    Tui,
 }
 
 #[derive(ClapParser, Debug)]
@@ -22,7 +24,7 @@ struct Cli {
     log_file: PathBuf,
 
     /// The desired output format for the simulation report.
-    #[arg(long, value_enum, default_value_t = OutputFormat::Summary)]
+    #[arg(long, value_enum, default_value_t = OutputFormat::Tui)]
     output_format: OutputFormat,
 }
 
@@ -30,6 +32,8 @@ struct Cli {
 enum CliError {
     #[error("Failed to parse log file: {0}")]
     ParsingError(#[from] parser::parser::ParsingError),
+    #[error("TUI Error: {0}")]
+    TuiError(String),
 }
 
 // Declare the tui module
@@ -42,6 +46,10 @@ struct Args {
     /// Path to the FDB simulation JSON log file
     #[arg(short, long)]
     log_file: PathBuf,
+
+    /// The desired output format for the simulation report.
+    #[arg(long, value_enum, default_value_t = OutputFormat::Tui)]
+    output_format: OutputFormat,
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -50,7 +58,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     // Parse the log file and create the report using the parser crate
     println!("Parsing log file: {}", args.log_file.display());
-    let events = parse_log_file(&args.log_file).expect("Error parsing log file");
+    let events = parse_log_file(&args.log_file)?;
     println!("Parsed {} events.", events.len());
 
     // Create the simulation report
@@ -58,22 +66,36 @@ fn main() -> Result<(), Box<dyn Error>> {
     let report = create_simulation_report(&events);
     println!("Report generated.");
 
-    // Setup terminal
-    let mut terminal =
-        tui::setup_terminal().map_err(|e| format!("Failed to setup terminal: {}", e))?;
+    // Execute based on output format
+    match args.output_format {
+        OutputFormat::Tui => {
+            println!("Launching TUI...");
+            // Setup terminal
+            let mut terminal = tui::setup_terminal()
+                .map_err(|e| CliError::TuiError(format!("Failed to setup terminal: {}", e)))?;
 
-    // Create app and run it
-    let mut app = tui::App::new(report); // Pass the report to the TUI app
-    let run_result = app.run(&mut terminal);
+            // Create app and run it
+            let mut app = tui::App::new(report); // Pass the report to the TUI app
+            let run_result = app.run(&mut terminal);
 
-    // Restore terminal even if the app run fails
-    tui::restore_terminal(&mut terminal)
-        .map_err(|e| format!("Failed to restore terminal: {}", e))?;
+            // Restore terminal even if the app run fails
+            tui::restore_terminal(&mut terminal)
+                .map_err(|e| CliError::TuiError(format!("Failed to restore terminal: {}", e)))?;
 
-    // Handle potential error from app run
-    if let Err(err) = run_result {
-        eprintln!("Error running TUI: {:?}", err);
-        return Err(format!("TUI application error: {}", err).into());
+            // Handle potential error from app run
+            if let Err(err) = run_result {
+                eprintln!("Error running TUI: {:?}", err);
+                return Err(CliError::TuiError(format!("TUI application error: {}", err)).into());
+            }
+        }
+        OutputFormat::Summary => {
+            println!("\n--- Simulation Report Summary ---\n");
+            println!("{}", report); // Print the Display impl of the report
+            println!("\n--- End Report Summary ---");
+        }
+        OutputFormat::Json => {
+            println!("{}", report); // Print the Display impl of the report
+        }
     }
 
     Ok(())
