@@ -1,7 +1,8 @@
-use clap::Parser;
-use serde_json;
-use std::path::PathBuf;
-use std::process;
+//! Command-line interface for the FDB Simulation Visualizer.
+
+use clap::Parser as ClapParser; // Alias clap's Parser
+use parser::{parser::parse_log_file, report::create_simulation_report}; // Use items from the parser library crate
+use std::{error::Error, path::PathBuf}; // Import std::process
 use thiserror::Error;
 
 /// Enum defining the possible output formats for the report.
@@ -11,9 +12,11 @@ enum OutputFormat {
     Summary,
     /// Full report in JSON format
     Json,
+    /// Display the report in an interactive TUI.
+    Tui,
 }
 
-#[derive(Parser, Debug)]
+#[derive(ClapParser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Cli {
     /// The path to the FDB simulation log file (JSON format).
@@ -21,7 +24,7 @@ struct Cli {
     log_file: PathBuf,
 
     /// The desired output format for the simulation report.
-    #[arg(long, value_enum, default_value_t = OutputFormat::Summary)]
+    #[arg(long, value_enum, default_value_t = OutputFormat::Tui)]
     output_format: OutputFormat,
 }
 
@@ -29,46 +32,69 @@ struct Cli {
 enum CliError {
     #[error("Failed to parse log file: {0}")]
     ParsingError(#[from] parser::parser::ParsingError),
-    #[error("Failed to create simulation report: {0}")] // Placeholder for potential report errors
-    ReportError(String), // Replace String with a specific error type if needed
+    #[error("TUI Error: {0}")]
+    TuiError(String),
 }
 
-fn main() -> Result<(), CliError> {
-    let cli = Cli::parse();
+// Declare the tui module
+mod tui;
 
-    if !cli.log_file.exists() {
-        eprintln!("Error: Log file not found: {}", cli.log_file.display());
-        process::exit(1);
-    }
+/// Command line arguments
+#[derive(ClapParser, Debug)]
+#[command(author, version, about = "A TUI for visualizing FDB simulation logs.", long_about = None)]
+struct Args {
+    /// Path to the FDB simulation JSON log file
+    #[arg(short, long)]
+    log_file: PathBuf,
 
-    if let Err(e) = run(cli) {
-        eprintln!("Application error: {}", e);
-        process::exit(1);
-    }
-
-    Ok(())
+    /// The desired output format for the simulation report.
+    #[arg(long, value_enum, default_value_t = OutputFormat::Tui)]
+    output_format: OutputFormat,
 }
 
-fn run(cli: Cli) -> Result<(), CliError> {
-    println!("Parsing log file: {}", cli.log_file.display());
+fn main() -> Result<(), Box<dyn Error>> {
+    // Parse command line arguments
+    let args = Args::parse();
 
-    // Call the parser library function
-    let events = parser::parser::parse_log_file(&cli.log_file)?;
+    // Parse the log file and create the report using the parser crate
+    println!("Parsing log file: {}", args.log_file.display());
+    let events = parse_log_file(&args.log_file)?;
+    println!("Parsed {} events.", events.len());
 
-    // Call the report generation function
-    let report = parser::report::create_simulation_report(&events[..]);
+    // Create the simulation report
+    println!("Generating simulation report...");
+    let report = create_simulation_report(&events);
+    println!("Report generated.");
 
-    // Handle output based on the requested format
-    match cli.output_format {
+    // Execute based on output format
+    match args.output_format {
+        OutputFormat::Tui => {
+            println!("Launching TUI...");
+            // Setup terminal
+            let mut terminal = tui::setup_terminal()
+                .map_err(|e| CliError::TuiError(format!("Failed to setup terminal: {}", e)))?;
+
+            // Create app and run it
+            let mut app = tui::App::new(report); // Pass the report to the TUI app
+            let run_result = app.run(&mut terminal);
+
+            // Restore terminal even if the app run fails
+            tui::restore_terminal(&mut terminal)
+                .map_err(|e| CliError::TuiError(format!("Failed to restore terminal: {}", e)))?;
+
+            // Handle potential error from app run
+            if let Err(err) = run_result {
+                eprintln!("Error running TUI: {:?}", err);
+                return Err(CliError::TuiError(format!("TUI application error: {}", err)).into());
+            }
+        }
         OutputFormat::Summary => {
-            eprintln!("Parsed {} events.", events.len());
-            println!("\n{}\n", report);
+            println!("\n--- Simulation Report Summary ---\n");
+            println!("{}", report); // Print the Display impl of the report
+            println!("\n--- End Report Summary ---");
         }
         OutputFormat::Json => {
-            // Print as JSON (existing logic)
-            let json_output = serde_json::to_string_pretty(&report)
-                .map_err(|e| CliError::ReportError(format!("JSON serialization error: {}", e)))?;
-            println!("{}", json_output);
+            println!("{}", report); // Print the Display impl of the report
         }
     }
 

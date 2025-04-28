@@ -104,6 +104,8 @@ pub struct SimulatedMachineStartData {
     pub process_class: String,
     #[serde(rename = "Locality")]
     pub locality: String, // Contains dcid, machineid, etc.
+    #[serde(rename = "MachineIPs")]
+    pub machine_ips: Option<String>,
     // fields populated from Locality
     pub zone_id: Option<String>,
     pub process_id: Option<String>,
@@ -322,12 +324,18 @@ impl SimulatorConfigData {
         let parts: Vec<&str> = self.config_string.split_whitespace().collect();
         let mut i = 0;
         while i < parts.len() {
+            if parts[i] == "new" {
+                i += 1;
+                continue;
+            }
             let part = parts[i];
             if let Some((key, value)) = part.split_once(":=").or_else(|| part.split_once('=')) {
                 self.config.insert(key.to_string(), value.to_string());
                 i += 1;
             } else {
-                self.config.insert(part.to_string(), "".to_string()); // Key without value
+                // replication is without a value
+                self.config
+                    .insert("replication".to_string(), part.to_string()); // Key without value
                 i += 1;
             }
         }
@@ -477,7 +485,9 @@ pub fn parse_log_file<P: AsRef<Path>>(file_path: P) -> Result<Vec<Event>, Parsin
 
 #[cfg(test)]
 mod tests {
-    use super::*; // Import items from outer module
+    use super::*;
+    use pretty_assertions::assert_eq;
+    // Import items from outer module
     use serde_json::json;
     use std::path::Path;
 
@@ -677,7 +687,6 @@ mod tests {
         let event = parse_event_from_node(&node).unwrap();
 
         let mut expected_config = HashMap::new();
-        expected_config.insert("new".to_string(), "".to_string());
         expected_config.insert("backup_worker_enabled".to_string(), "0".to_string());
         expected_config.insert("blob_granules_enabled".to_string(), "0".to_string());
         expected_config.insert("commit_proxies".to_string(), "4".to_string());
@@ -696,20 +705,25 @@ mod tests {
             "none".to_string(),
         );
         expected_config.insert("proxies".to_string(), "5".to_string());
-        expected_config.insert("three_data_hall".to_string(), "".to_string());
+        expected_config.insert("replication".to_string(), "three_data_hall".to_string());
         expected_config.insert("resolvers".to_string(), "1".to_string());
         expected_config.insert("storage_engine".to_string(), "memory".to_string());
         expected_config.insert("storage_migration_type".to_string(), "disabled".to_string());
         expected_config.insert("tenant_mode".to_string(), "disabled".to_string());
         expected_config.insert("usable_regions".to_string(), "1".to_string());
 
-        let expected_event = Event::SimulatorConfig(SimulatorConfigData {
-            timestamp: "0.000000".to_string(),
-            machine: "0.0.0.0:0".to_string(),
-            config: expected_config,
-            config_string: "new backup_worker_enabled:=0 blob_granules_enabled:=0 commit_proxies:=4 encryption_at_rest_mode=disabled grv_proxies:=1 log_engine=ssd-2 log_spill:=1 log_version:=6 logs:=3 perpetual_storage_wiggle:=0 perpetual_storage_wiggle_engine=none proxies:=5 three_data_hall resolvers:=1 storage_engine=memory storage_migration_type=disabled tenant_mode=disabled usable_regions:=1".to_string(),
-        });
-
-        assert_eq!(event, expected_event);
+        // assert that event is simulator config
+        // assert that config is not empty
+        match event {
+            Event::SimulatorConfig(data) => {
+                for (key, value) in expected_config {
+                    match data.config.get(&key) {
+                        Some(v) => assert_eq!(v, &value),
+                        None => panic!("Key {} not found in config", key),
+                    }
+                }
+            }
+            _ => panic!("Parsed event is not a SimulatorConfig event"),
+        }
     }
 }

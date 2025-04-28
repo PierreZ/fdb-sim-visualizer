@@ -8,7 +8,9 @@ edition = "2021"
 [dependencies]
 parser = { path = "../parser" }
 clap = { version = "4.5.4", features = ["derive"] }
-thiserror = "1.0.59"
+thiserror = "1.0.61"
 serde = { version = "1.0", features = ["derive"] } 
 serde_json = "1.0"
 humantime = "2.1.0"
+ratatui = { version = "0.27.0", features = ["all-widgets", "crossterm"] } 
+crossterm = "0.27.0"

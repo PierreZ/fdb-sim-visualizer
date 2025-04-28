@@ -1,7 +1,6 @@
 [configuration]
-minimumRegions = 2
-minimumReplication = 2
 buggify = true
+minimumReplication = 3
 
 [[test]]
 testTitle = 'NemesisTest'
@@ -21,9 +20,6 @@ testTitle = 'NemesisTest'
     [[test.workload]]
     # Reboot processes
     testName = 'Attrition'
-    machinesToKill = 10
-    machinesToLeave = 3
-    reboot = true
     testDuration = 30.0
     
     [[test.workload]]
@@ -34,6 +30,5 @@ testTitle = 'NemesisTest'
     [[test.workload]]
     # Change configuration of the database
     testName = 'ChangeConfig'
-    maxDelayBeforeChange = 30.0
     # Move consensus-based processes around
     coordinators = 'auto'
